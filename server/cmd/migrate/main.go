@@ -303,7 +303,6 @@ var concurrentIndexCleanups = map[string]string{
 	"459_chat_message_assistant_task_index":                     "idx_chat_message_assistant_task",
 	"460_agent_task_queue_autopilot_run_created_at_index":       "idx_agent_task_queue_autopilot_run_created_at",
 	"462_instance_telemetry_state_singleton_index":              "instance_telemetry_state_singleton_uidx",
-	"464_agent_runtime_telemetry_last_seen_index":               "idx_agent_runtime_telemetry_last_seen",
 	"465_agent_task_queue_telemetry_started_index":              "idx_agent_task_queue_telemetry_started",
 }
 
