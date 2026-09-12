@@ -193,7 +193,13 @@ func TestWorkspaceUsageExportRuntimeFilterEnforcesRuntimeReadAccess(t *testing.T
 	crossWorkspacePath := "/api/usage/export?workspace_id=" + foreignWorkspaceID +
 		"&from=2025-04-01&to=2025-04-02&runtime_id=" + runtimeID
 	w := httptest.NewRecorder()
-	testHandler.GetWorkspaceUsageExport(w, newRequestAs(runtimeOwnerID, http.MethodGet, crossWorkspacePath, nil))
+	crossWorkspaceRequest := newRequestAs(runtimeOwnerID, http.MethodGet, crossWorkspacePath, nil)
+	// newRequest installs the shared test workspace header by default, and the
+	// request resolver intentionally gives that header priority over the query
+	// parameter. Override it so this request actually targets the foreign
+	// workspace whose authorization boundary the assertion is meant to cover.
+	crossWorkspaceRequest.Header.Set("X-Workspace-ID", foreignWorkspaceID)
+	testHandler.GetWorkspaceUsageExport(w, crossWorkspaceRequest)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("cross-workspace runtime status = %d, want 404: %s", w.Code, w.Body.String())
 	}
