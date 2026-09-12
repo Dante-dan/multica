@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -195,9 +196,18 @@ func (h *Handler) GetWorkspaceUsageExport(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	runtimeID, ok := parseUsageExportOptionalUUID(w, r, "runtime_id")
-	if !ok {
-		return
+	var runtimeID pgtype.UUID
+	if runtimeRef := strings.TrimSpace(r.URL.Query().Get("runtime_id")); runtimeRef != "" {
+		rt, runtimeMember, ok := h.requireRuntimeReadAccess(w, r, obsmetrics.RuntimeLookupSourceTask, runtimeRef)
+		if !ok {
+			return
+		}
+		if rt.WorkspaceID != parseUUID(workspaceID) {
+			writeError(w, http.StatusNotFound, "runtime not found")
+			return
+		}
+		runtimeID = rt.ID
+		member = runtimeMember
 	}
 	restricted, ok := h.dashboardRestrictedAgents(w, r, workspaceID, member.Role)
 	if !ok {

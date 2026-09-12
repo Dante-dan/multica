@@ -124,3 +124,77 @@ func TestWorkspaceUsageExportExactHalfOpenIntervalAndPagination(t *testing.T) {
 		t.Fatalf("tokens = %d", first.Items[0].InputTokens+second.Items[0].InputTokens)
 	}
 }
+
+func TestWorkspaceUsageExportRuntimeFilterEnforcesRuntimeReadAccess(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	runtimeID, runtimeOwnerID, plainMemberID := runtimeVisibilityFixture(t)
+	adminID := dbfx.User(t, "Usage Export Admin", "usage-export-admin@multica.test")
+	dbfx.Member(t, testWorkspaceID, adminID, "admin")
+	agentID := dbfx.Agent(t, "usage-export-private-runtime-agent", runtimeID, testutil.Cols{
+		"owner_id":       runtimeOwnerID,
+		"visibility":     "workspace",
+		"runtime_id":     runtimeID,
+		"runtime_mode":   "cloud",
+		"runtime_config": testutil.Raw("'{}'::jsonb"),
+	})
+	taskID := dbfx.Task(t, agentID, testutil.Cols{
+		"runtime_id": runtimeID,
+		"status":     "completed",
+		"created_at": time.Date(2025, 4, 1, 12, 0, 0, 0, time.UTC),
+	})
+	dbfx.Insert(t, "task_usage", testutil.Cols{
+		"task_id": taskID, "provider": "Claude", "model": "private-model",
+		"input_tokens": 42, "output_tokens": 0,
+		"cache_read_tokens": 0, "cache_write_tokens": 0,
+		"created_at": time.Date(2025, 4, 1, 12, 0, 0, 0, time.UTC),
+	})
+
+	path := "/api/usage/export?workspace_id=" + testWorkspaceID +
+		"&from=2025-04-01&to=2025-04-02&runtime_id=" + runtimeID
+	request := func(userID string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		testHandler.GetWorkspaceUsageExport(w, newRequestAs(userID, http.MethodGet, path, nil))
+		return w
+	}
+
+	ownerResponse := request(runtimeOwnerID)
+	if ownerResponse.Code != http.StatusOK {
+		t.Fatalf("runtime owner status = %d: %s", ownerResponse.Code, ownerResponse.Body.String())
+	}
+	var export WorkspaceUsageExportResponse
+	if err := json.NewDecoder(ownerResponse.Body).Decode(&export); err != nil {
+		t.Fatal(err)
+	}
+	if len(export.Items) != 1 || export.Items[0].InputTokens != 42 {
+		t.Fatalf("runtime owner export = %+v", export.Items)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		userID string
+	}{
+		{name: "plain member", userID: plainMemberID},
+		{name: "workspace admin", userID: adminID},
+		{name: "workspace owner", userID: testUserID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := request(tc.userID)
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+
+	foreignWorkspaceID := dbfx.Workspace(t, "Usage Export Foreign Workspace", "usage-export-foreign-workspace")
+	dbfx.Member(t, foreignWorkspaceID, runtimeOwnerID, "owner")
+	crossWorkspacePath := "/api/usage/export?workspace_id=" + foreignWorkspaceID +
+		"&from=2025-04-01&to=2025-04-02&runtime_id=" + runtimeID
+	w := httptest.NewRecorder()
+	testHandler.GetWorkspaceUsageExport(w, newRequestAs(runtimeOwnerID, http.MethodGet, crossWorkspacePath, nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("cross-workspace runtime status = %d, want 404: %s", w.Code, w.Body.String())
+	}
+}
