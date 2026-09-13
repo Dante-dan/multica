@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => {
     appListeners: new Map<string, () => void>(),
     menuTemplate: [] as Electron.MenuItemConstructorOptions[],
     resize: vi.fn(),
+    preferredSystemLanguages: vi.fn(() => ["en-US"]),
   };
 });
 
@@ -26,6 +27,7 @@ vi.mock("electron", () => ({
   app: {
     on: (event: string, listener: () => void) =>
       mocks.appListeners.set(event, listener),
+    getPreferredSystemLanguages: mocks.preferredSystemLanguages,
   },
   Menu: {
     buildFromTemplate: (template: Electron.MenuItemConstructorOptions[]) => {
@@ -49,6 +51,7 @@ vi.mock("electron", () => ({
 
 import {
   buildTrayMenuTemplate,
+  pickTrayMenuLabels,
   resetTrayForTests,
   setupTray,
 } from "./tray-manager";
@@ -58,6 +61,8 @@ beforeEach(() => {
   mocks.appListeners.clear();
   mocks.menuTemplate = [];
   mocks.resize.mockClear();
+  mocks.preferredSystemLanguages.mockClear();
+  mocks.preferredSystemLanguages.mockReturnValue(["en-US"]);
 });
 
 afterEach(() => {
@@ -75,6 +80,16 @@ describe("tray manager", () => {
 
     expect(showWindow).toHaveBeenCalledOnce();
     expect(requestQuit).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["zh-CN", { open: "打开 Multica", quit: "退出 Multica" }],
+    ["zh-TW", { open: "打开 Multica", quit: "退出 Multica" }],
+    ["ja-JP", { open: "Multica を開く", quit: "Multica を終了" }],
+    ["ko-KR", { open: "Multica 열기", quit: "Multica 종료" }],
+    ["fr-FR", { open: "Open Multica", quit: "Quit Multica" }],
+  ])("localizes tray actions for %s", (locale, expected) => {
+    expect(pickTrayMenuLabels(locale)).toEqual(expected);
   });
 
   it("restores from either tray click gesture and only mounts once", () => {

@@ -8,14 +8,38 @@ export interface TrayManagerOptions {
 
 let tray: Tray | null = null;
 
-export function buildTrayMenuTemplate(actions: {
-  showWindow: () => void;
-  requestQuit: () => void;
-}): Electron.MenuItemConstructorOptions[] {
+type TrayMenuLabels = {
+  open: string;
+  quit: string;
+};
+
+const labelsByLocale: Record<string, TrayMenuLabels> = {
+  en: { open: "Open Multica", quit: "Quit Multica" },
+  "zh-Hans": { open: "打开 Multica", quit: "退出 Multica" },
+  ja: { open: "Multica を開く", quit: "Multica を終了" },
+  ko: { open: "Multica 열기", quit: "Multica 종료" },
+};
+
+export function pickTrayMenuLabels(preferredLanguage: string): TrayMenuLabels {
+  const preferred = preferredLanguage.toLowerCase();
+  if (preferred.startsWith("zh")) return labelsByLocale["zh-Hans"];
+  if (preferred.startsWith("ja")) return labelsByLocale.ja;
+  if (preferred.startsWith("ko")) return labelsByLocale.ko;
+  return labelsByLocale.en;
+}
+
+export function buildTrayMenuTemplate(
+  actions: {
+    showWindow: () => void;
+    requestQuit: () => void;
+  },
+  preferredLanguage = app.getPreferredSystemLanguages()[0] ?? "",
+): Electron.MenuItemConstructorOptions[] {
+  const labels = pickTrayMenuLabels(preferredLanguage);
   return [
-    { label: "Open Multica", click: actions.showWindow },
+    { label: labels.open, click: actions.showWindow },
     { type: "separator" },
-    { label: "Quit Multica", click: actions.requestQuit },
+    { label: labels.quit, click: actions.requestQuit },
   ];
 }
 
