@@ -2604,7 +2604,7 @@ func (h *Handler) SetAgentSkills(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := qtx.TouchAgentSkills(r.Context(), agent.ID); err != nil {
+	if err := qtx.TouchAgentForSkillChange(r.Context(), agent.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update agent timestamp")
 		return
 	}
@@ -2657,7 +2657,7 @@ func (h *Handler) AddAgentSkills(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := qtx.TouchAgentSkills(r.Context(), agent.ID); err != nil {
+	if err := qtx.TouchAgentForSkillChange(r.Context(), agent.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update agent timestamp")
 		return
 	}
@@ -2712,7 +2712,7 @@ func (h *Handler) SetAgentSkillEnabled(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "agent skill not found")
 		return
 	}
-	if err := qtx.TouchAgentSkills(r.Context(), agent.ID); err != nil {
+	if err := qtx.TouchAgentForSkillChange(r.Context(), agent.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update agent timestamp")
 		return
 	}
@@ -2752,7 +2752,7 @@ func (h *Handler) RemoveAgentSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to remove agent skill")
 		return
 	}
-	if err := qtx.TouchAgentSkills(r.Context(), agent.ID); err != nil {
+	if err := qtx.TouchAgentForSkillChange(r.Context(), agent.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update agent timestamp")
 		return
 	}

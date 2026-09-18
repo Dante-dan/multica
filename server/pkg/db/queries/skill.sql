@@ -162,11 +162,9 @@ WHERE agent_id = $1 AND skill_id = $2;
 -- name: RemoveAllAgentSkills :exec
 DELETE FROM agent_skill WHERE agent_id = $1;
 
--- name: TouchAgentSkills :exec
--- Skill assignments are part of the agent's persisted definition even though
--- they live in a junction table. Advance the parent version in the same
--- transaction as every assignment change so readers that key off agent
--- updated_at observe skill-only edits.
+-- name: TouchAgentForSkillChange :exec
+-- Skill assignments already persist in agent_skill. Touch the parent Agent's
+-- last-modified timestamp in the same transaction as each assignment change.
 UPDATE agent
 SET updated_at = now()
 WHERE id = $1;

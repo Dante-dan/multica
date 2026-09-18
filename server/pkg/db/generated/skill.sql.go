@@ -688,18 +688,16 @@ func (q *Queries) SetAgentSkillEnabled(ctx context.Context, arg SetAgentSkillEna
 	return result.RowsAffected(), nil
 }
 
-const touchAgentSkills = `-- name: TouchAgentSkills :exec
+const touchAgentForSkillChange = `-- name: TouchAgentForSkillChange :exec
 UPDATE agent
 SET updated_at = now()
 WHERE id = $1
 `
 
-// Skill assignments are part of the agent's persisted definition even though
-// they live in a junction table. Advance the parent version in the same
-// transaction as every assignment change so readers that key off agent
-// updated_at observe skill-only edits.
-func (q *Queries) TouchAgentSkills(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, touchAgentSkills, id)
+// Skill assignments already persist in agent_skill. Touch the parent Agent's
+// last-modified timestamp in the same transaction as each assignment change.
+func (q *Queries) TouchAgentForSkillChange(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, touchAgentForSkillChange, id)
 	return err
 }
 
