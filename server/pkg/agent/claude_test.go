@@ -683,6 +683,31 @@ func TestBuildEnvAppendsExtras(t *testing.T) {
 	}
 }
 
+func TestMergeEnvExtraReplacesInheritedValue(t *testing.T) {
+	t.Parallel()
+
+	env := mergeEnv([]string{
+		"PATH=/usr/bin",
+		"TMPDIR=/tmp",
+		"UNCHANGED=value",
+	}, map[string]string{
+		"TMPDIR": "/tmp/multica-task-private",
+	})
+
+	var tempEntries []string
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "TMPDIR=") {
+			tempEntries = append(tempEntries, entry)
+		}
+	}
+	if len(tempEntries) != 1 || tempEntries[0] != "TMPDIR=/tmp/multica-task-private" {
+		t.Fatalf("TMPDIR entries = %v, want exactly the private task value", tempEntries)
+	}
+	if !slices.Contains(env, "PATH=/usr/bin") || !slices.Contains(env, "UNCHANGED=value") {
+		t.Fatalf("unrelated inherited values were not preserved: %v", env)
+	}
+}
+
 func TestBuildEnvNilExtras(t *testing.T) {
 	t.Parallel()
 

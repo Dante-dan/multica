@@ -940,6 +940,15 @@ func mergeEnv(base []string, extra map[string]string) []string {
 		if isFilteredChildEnvKey(key) || strings.HasPrefix(strings.ToUpper(key), "MULTICA_") {
 			continue
 		}
+		// An explicit task value replaces the daemon's inherited value; do not
+		// pass both spellings to execve. Duplicate environment entries have no
+		// portable winner: shells commonly use the last value while native
+		// runtimes may return the first one. In particular, that let OpenCode's
+		// embedded Bun process observe the daemon's TMPDIR instead of the private
+		// per-task TMPDIR appended below (#8392).
+		if _, overridden := extra[key]; overridden {
+			continue
+		}
 		env = append(env, entry)
 	}
 	for k, v := range extra {
