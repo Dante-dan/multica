@@ -88,6 +88,12 @@ SELECT * FROM task_message
 WHERE task_id = $1
 ORDER BY seq ASC;
 
+-- name: TaskHasMessages :one
+SELECT EXISTS (
+    SELECT 1 FROM task_message
+    WHERE task_id = $1
+);
+
 -- name: ListTaskMessagesSince :many
 SELECT * FROM task_message
 WHERE task_id = $1 AND seq > $2

@@ -150,6 +150,28 @@ func (f cancelFinalizeFixture) insertTranscriptRow(t *testing.T, ctx context.Con
 	}
 }
 
+func TestTaskHasMessages_LargeTranscriptReturnsExistenceOnly(t *testing.T) {
+	ctx := context.Background()
+	pool := newCancelFinalizePool(t)
+	f := createCancelFinalizeFixture(t, ctx, pool, "running", true)
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO task_message (task_id, seq, type, content)
+		SELECT $1, seq, 'text', repeat('x', 64 * 1024)
+		FROM generate_series(1, 96) AS seq
+	`, f.taskID); err != nil {
+		t.Fatalf("insert large transcript: %v", err)
+	}
+
+	hasMessages, err := db.New(pool).TaskHasMessages(ctx, util.MustParseUUID(f.taskID))
+	if err != nil {
+		t.Fatalf("check task messages: %v", err)
+	}
+	if !hasMessages {
+		t.Fatal("TaskHasMessages returned false for a non-empty transcript")
+	}
+}
+
 func (f cancelFinalizeFixture) chatFinalizeDeferredAt(t *testing.T, ctx context.Context) *time.Time {
 	t.Helper()
 	var deferredAt *time.Time
