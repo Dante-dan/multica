@@ -748,7 +748,7 @@ describe("IssueDetail (shared)", () => {
     const button = await screen.findByRole("button", { name: "Mark as done" });
     fireEvent.click(button);
     await waitFor(() => expect(mockApiObj.updateIssue).toHaveBeenCalled());
-    expect(mockApiObj.updateIssue.mock.calls[0][1]).toMatchObject({ status: "done" });
+    expect(mockApiObj.updateIssue.mock.calls[0]?.[1]).toMatchObject({ status: "done" });
     expect(button).toBeDisabled();
     expect(mockBackOrReplace).not.toHaveBeenCalled();
     await act(async () => { finish({ ...mockIssue, status: "done" }); });
