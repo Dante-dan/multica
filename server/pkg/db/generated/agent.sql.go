@@ -2858,6 +2858,14 @@ SELECT
 FROM agent_task_queue p
 WHERE p.id = $1
   AND lock_task_owner_rows(p.agent_id, p.issue_id, p.runtime_id)
+  -- A retry cannot revive a run the rule no longer permits. enabled is not
+  -- checked: a timeout or max-fires pause still permits its final run.
+  AND (p.context->>'wakeup_id' IS NULL OR EXISTS (
+      SELECT 1 FROM issue_wakeup w
+      WHERE w.id = (p.context->>'wakeup_id')::uuid
+        AND w.disabled_at IS NULL
+        AND w.revision = (p.context->>'wakeup_revision')::bigint
+  ))
 ON CONFLICT (issue_id, agent_id, (COALESCE(comment_thread_id, '00000000-0000-0000-0000-000000000000'::uuid))) WHERE status IN ('queued', 'dispatched')
        OR (status = 'deferred' AND context->>'channel_issue_media_pending' = 'true')
 DO NOTHING
@@ -3151,7 +3159,11 @@ func (q *Queries) DeleteUnstartedQuickCreateRetryTask(ctx context.Context, taskI
 const expireStaleQueuedTasks = `-- name: ExpireStaleQueuedTasks :many
 WITH victims AS (
     SELECT id FROM agent_task_queue
-    WHERE status = 'queued' AND context->>'wakeup_id' IS NULL
+    WHERE (status IN ('queued','deferred') AND started_at IS NULL AND context->>'wakeup_id' IS NOT NULL AND NOT EXISTS (
+          SELECT 1 FROM issue_wakeup w WHERE w.id = (agent_task_queue.context->>'wakeup_id')::uuid
+            AND w.disabled_at IS NULL AND w.revision = (agent_task_queue.context->>'wakeup_revision')::bigint
+      ))
+      OR (status = 'queued' AND context->>'wakeup_id' IS NULL
       AND created_at < now() - make_interval(secs => $1::double precision)
       AND (
           runtime_id IS NULL
@@ -3170,6 +3182,7 @@ WITH victims AS (
           WHERE retry_parent.id = agent_task_queue.parent_task_id
             AND retry_parent.failure_reason = 'runtime_offline'
       )
+      )
     ORDER BY created_at ASC
     LIMIT $2::int
     FOR UPDATE SKIP LOCKED
@@ -3177,12 +3190,16 @@ WITH victims AS (
 UPDATE agent_task_queue t
 SET status = 'failed',
     completed_at = now(),
-    error = 'runtime unavailable while task was queued',
+    error = CASE WHEN t.context->>'wakeup_id' IS NOT NULL THEN 'wakeup rule no longer permits this run' ELSE 'runtime unavailable while task was queued' END,
     failure_reason = 'queued_expired',
     prepare_lease_expires_at = NULL
 FROM victims v
 WHERE t.id = v.id
-  AND t.status = 'queued'
+  AND ((t.status IN ('queued','deferred') AND t.started_at IS NULL AND t.context->>'wakeup_id' IS NOT NULL AND NOT EXISTS (
+          SELECT 1 FROM issue_wakeup w WHERE w.id = (t.context->>'wakeup_id')::uuid
+            AND w.disabled_at IS NULL AND w.revision = (t.context->>'wakeup_revision')::bigint
+      ))
+  OR (t.status = 'queued' AND t.context->>'wakeup_id' IS NULL
   AND t.created_at < now() - make_interval(secs => $1::double precision)
   AND (
       t.runtime_id IS NULL
@@ -3199,6 +3216,7 @@ WHERE t.id = v.id
       WHERE retry_parent.id = t.parent_task_id
         AND retry_parent.failure_reason = 'runtime_offline'
   )
+  ))
 RETURNING t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.runtime_mcp_overlay, t.escalation_for_task_id, t.fire_at, t.originator_user_id, t.runtime_connected_apps, t.coalesced_comment_ids, t.delivered_comment_ids, t.chat_input_task_id, t.chat_finalize_deferred_at, t.originator_source, t.delegated_from_task_id, t.retry_of_task_id, t.rerun_of_task_id, t.rule_version_id, t.trigger_evidence_kind, t.trigger_evidence_ref_id, t.accountable_user_id, t.session_rollout_missing, t.retired_session_id, t.quick_actions_disabled, t.regenerate_quick_actions_for, t.branch_name, t.durable_work_dir, t.channel_context_revision, t.comment_thread_id, t.cancelled_by_type, t.cancelled_by_id, t.cancelled_by_name, t.issue_snapshot
 `
 
@@ -3208,6 +3226,10 @@ type ExpireStaleQueuedTasksParams struct {
 }
 
 // Fails queued tasks whose runtime can no longer prove it is alive.
+// Also retires unstarted queued/deferred wakeup runs whose rule was disabled,
+// edited or deleted, regardless of age or runtime health. The retry insert
+// checks its statement snapshot; this backstop covers pre-existing rows and
+// concurrent rule changes without introducing task/rule lock-order inversions.
 //
 // This used to be a pure wall clock: queued for longer than a TTL (default 2h)
 // meant failed. That conflated "nobody is coming for this task" with "the
