@@ -1446,7 +1446,34 @@ func (h *Handler) processHeartbeat(ctx context.Context, runtimeID string, suppor
 		if popErr != nil {
 			slog.Warn("local skill list PopPending failed", "error", popErr, "runtime_id", runtimeID)
 		} else if pendingSkills != nil {
-			ack.PendingLocalSkills = &protocol.DaemonHeartbeatPendingLocalSkills{ID: pendingSkills.ID}
+			pending := &protocol.DaemonHeartbeatPendingLocalSkills{ID: pendingSkills.ID}
+			if pendingSkills.AgentID != "" {
+				a, err := h.Queries.GetAgent(ctx, parseUUID(pendingSkills.AgentID))
+				if err != nil || !a.RuntimeID.Valid || uuidToString(a.RuntimeID) != runtimeID {
+					_ = h.LocalSkillListStore.Fail(ctx, pendingSkills.ID, "agent is no longer assigned to this runtime")
+				} else {
+					scope := &protocol.LocalSkillAgentScope{AgentID: pendingSkills.AgentID}
+					_ = json.Unmarshal(a.CustomArgs, &scope.CustomArgs)
+					_ = json.Unmarshal(a.CustomEnv, &scope.CustomEnv)
+					rt, lookupErr := h.Queries.GetAgentRuntime(ctx, a.RuntimeID)
+					if lookupErr == nil && rt.ProfileID.Valid {
+						profile, profileErr := h.Queries.GetRuntimeProfile(ctx, rt.ProfileID)
+						if profileErr != nil {
+							_ = h.LocalSkillListStore.Fail(ctx, pendingSkills.ID, "runtime profile unavailable")
+							break
+						}
+						_ = json.Unmarshal(profile.FixedArgs, &scope.FixedArgs)
+					}
+					if lookupErr != nil {
+						_ = h.LocalSkillListStore.Fail(ctx, pendingSkills.ID, "runtime unavailable")
+						break
+					}
+					pending.AgentScope = scope
+					ack.PendingLocalSkills = pending
+				}
+			} else {
+				ack.PendingLocalSkills = pending
+			}
 		}
 	case probeErr != nil:
 		if errors.Is(probeErr, context.DeadlineExceeded) || errors.Is(probeErr, context.Canceled) {

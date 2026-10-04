@@ -81,7 +81,7 @@ const (
 // can have POST, heartbeat and poll land on different nodes and still agree
 // on the request's state.
 type LocalSkillListStore interface {
-	Create(ctx context.Context, runtimeID string) (*RuntimeLocalSkillListRequest, error)
+	Create(ctx context.Context, runtimeID string, agentID string) (*RuntimeLocalSkillListRequest, error)
 	Get(ctx context.Context, id string) (*RuntimeLocalSkillListRequest, error)
 	// HasPending is a cheap read-only probe that reports whether the runtime
 	// has at least one pending request. Callers on the hot path (e.g. the
@@ -203,6 +203,7 @@ type RuntimeLocalMcpServerSummary struct {
 type RuntimeLocalSkillListRequest struct {
 	ID           string                         `json:"id"`
 	RuntimeID    string                         `json:"runtime_id"`
+	AgentID      string                         `json:"agent_id,omitempty"`
 	Status       RuntimeLocalSkillRequestStatus `json:"status"`
 	Skills       []RuntimeLocalSkillSummary     `json:"skills,omitempty"`
 	Supported    bool                           `json:"supported"`
@@ -249,7 +250,7 @@ func NewInMemoryLocalSkillListStore() *InMemoryLocalSkillListStore {
 	return &InMemoryLocalSkillListStore{requests: make(map[string]*RuntimeLocalSkillListRequest)}
 }
 
-func (s *InMemoryLocalSkillListStore) Create(_ context.Context, runtimeID string) (*RuntimeLocalSkillListRequest, error) {
+func (s *InMemoryLocalSkillListStore) Create(_ context.Context, runtimeID string, agentID string) (*RuntimeLocalSkillListRequest, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -267,6 +268,7 @@ func (s *InMemoryLocalSkillListStore) Create(_ context.Context, runtimeID string
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
+	req.AgentID = agentID
 	s.requests[req.ID] = req
 	return req, nil
 }
@@ -602,7 +604,19 @@ func (h *Handler) InitiateListLocalSkills(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	req, err := h.LocalSkillListStore.Create(r.Context(), rt.runtimeID)
+	agentID := r.URL.Query().Get("agent_id")
+	if agentID != "" {
+		a, allowed := h.loadAgentForUser(w, r, agentID)
+		if !allowed {
+			return
+		}
+		if !a.RuntimeID.Valid || uuidToString(a.RuntimeID) != rt.runtimeID || uuidToString(a.WorkspaceID) != rt.workspaceID {
+			writeError(w, http.StatusConflict, "agent is no longer assigned to this runtime")
+			return
+		}
+		agentID = uuidToString(a.ID)
+	}
+	req, err := h.LocalSkillListStore.Create(r.Context(), rt.runtimeID, agentID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enqueue local skills request: "+err.Error())
 		return
@@ -629,6 +643,16 @@ func (h *Handler) GetLocalSkillListRequest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if req.AgentID != "" {
+		a, allowed := h.loadAgentForUser(w, r, req.AgentID)
+		if !allowed {
+			return
+		}
+		if !a.RuntimeID.Valid || uuidToString(a.RuntimeID) != rt.runtimeID {
+			writeError(w, http.StatusConflict, "agent is no longer assigned to this runtime")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, req)
 }
 
@@ -740,6 +764,7 @@ func (h *Handler) ReportLocalSkillListResult(w http.ResponseWriter, r *http.Requ
 	}
 
 	var body struct {
+		AgentID      string                         `json:"agent_id"`
 		Status       string                         `json:"status"`
 		Skills       []RuntimeLocalSkillSummary     `json:"skills"`
 		Supported    *bool                          `json:"supported"`
@@ -752,6 +777,10 @@ func (h *Handler) ReportLocalSkillListResult(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if body.Status == "completed" && req.AgentID != body.AgentID {
+		body.Status = "failed"
+		body.Error = "daemon did not honor agent-scoped discovery; update the daemon"
+	}
 	if body.Status == "completed" {
 		supported := true
 		if body.Supported != nil {

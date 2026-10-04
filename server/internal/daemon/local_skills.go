@@ -14,6 +14,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/skill"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -173,7 +174,12 @@ func localSkillRootsForProvider(provider string) ([]localSkillRoot, bool, error)
 		case "cursor":
 			providerRoot = filepath.Join(home, ".cursor", "skills")
 		case "hermes":
-			providerRoot = hermesLocalSkillsRoot()
+			hermesRoots, err := hermesSkillRoots(nil)
+			if err != nil {
+				return nil, true, err
+			}
+			// Unscoped listing/import retains the existing universal fallback.
+			return append(hermesRoots, localSkillRoot{path: filepath.Join(home, ".agents", "skills"), kind: localSkillRootUniversal}), true, nil
 		case "kimi":
 			providerRoot = filepath.Join(home, ".kimi", "skills")
 		case "reasonix":
@@ -475,8 +481,56 @@ func collectLocalSkillFiles(skillDir string, includeContent bool) ([]SkillFileDa
 	return files, nil
 }
 
+func hermesSkillRoots(scope *protocol.LocalSkillAgentScope) ([]localSkillRoot, error) {
+	if scope == nil {
+		scope = &protocol.LocalSkillAgentScope{}
+	}
+	sel := agent.ParseHermesProfileArgs(agent.HermesLaunchArgv(scope.FixedArgs, scope.CustomArgs, slog.Default()))
+	env := sanitizeAgentEnv(scope.CustomEnv)
+	res := execenv.ResolveHermesProfile(env["HERMES_HOME"], sel.Name, sel.Found, sel.Inline)
+	if res.Err != nil {
+		return nil, res.Err
+	}
+	if res.MustExist {
+		info, statErr := os.Stat(res.SourceHome)
+		if statErr != nil {
+			return nil, statErr
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("hermes profile home is not a directory")
+		}
+	}
+	if env == nil {
+		env = make(map[string]string)
+	}
+	env["HERMES_HOME"] = res.SourceHome
+	paths, rootErr := execenv.HermesSkillRoots(res.SourceHome, env)
+	if rootErr != nil {
+		return nil, rootErr
+	}
+	roots := []localSkillRoot{}
+	for _, path := range paths {
+		if !strings.Contains(path, "${") {
+			roots = append(roots, localSkillRoot{path: path, kind: localSkillRootProvider})
+		}
+	}
+	return roots, nil
+}
+
 func listRuntimeLocalSkills(provider string) ([]runtimeLocalSkillSummary, bool, error) {
-	roots, supported, err := localSkillRootsForProvider(provider)
+	return listRuntimeLocalSkillsForAgent(provider, nil)
+}
+
+func listRuntimeLocalSkillsForAgent(provider string, scope *protocol.LocalSkillAgentScope) ([]runtimeLocalSkillSummary, bool, error) {
+	var roots []localSkillRoot
+	var supported bool
+	var err error
+	if provider == "hermes" && scope != nil {
+		roots, err = hermesSkillRoots(scope)
+		supported = true
+	} else {
+		roots, supported, err = localSkillRootsForProvider(provider)
+	}
 	if err != nil || !supported {
 		return nil, supported, err
 	}

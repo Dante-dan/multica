@@ -79,7 +79,7 @@ func NewRedisLocalSkillListStore(rdb redis.UniversalClient) *RedisLocalSkillList
 	return &RedisLocalSkillListStore{rdb: rdb}
 }
 
-func (s *RedisLocalSkillListStore) Create(ctx context.Context, runtimeID string) (*RuntimeLocalSkillListRequest, error) {
+func (s *RedisLocalSkillListStore) Create(ctx context.Context, runtimeID string, agentID string) (*RuntimeLocalSkillListRequest, error) {
 	now := time.Now()
 	req := &RuntimeLocalSkillListRequest{
 		ID:        randomID(),
@@ -89,6 +89,7 @@ func (s *RedisLocalSkillListStore) Create(ctx context.Context, runtimeID string)
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+	req.AgentID = agentID
 	data, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal list request: %w", err)

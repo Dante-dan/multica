@@ -8,8 +8,8 @@ import type {
 
 export const runtimeLocalSkillsKeys = {
   all: () => ["runtimes", "local-skills"] as const,
-  forRuntime: (runtimeId: string) =>
-    [...runtimeLocalSkillsKeys.all(), runtimeId] as const,
+  forRuntime: (runtimeId: string, agentId?: string, revision?: string) =>
+    [...runtimeLocalSkillsKeys.all(), runtimeId, ...(agentId ? [agentId, revision] : [])] as const,
 };
 
 const POLL_INTERVAL_MS = 500;
@@ -28,8 +28,9 @@ const IMPORT_POLL_TIMEOUT_MS = 4 * 60_000; // 4 minutes
 
 export async function resolveRuntimeLocalSkills(
   runtimeId: string,
+  agentId?: string,
 ): Promise<RuntimeLocalSkillsResult> {
-  const initial = await api.initiateListLocalSkills(runtimeId);
+  const initial = await api.initiateListLocalSkills(runtimeId, agentId);
   const start = Date.now();
   let current = initial;
 
@@ -92,12 +93,12 @@ export async function resolveRuntimeLocalSkillImport(
   };
 }
 
-export function runtimeLocalSkillsOptions(runtimeId: string | null | undefined) {
+export function runtimeLocalSkillsOptions(runtimeId: string | null | undefined, agentId?: string, revision?: string) {
   return queryOptions({
     queryKey: runtimeId
-      ? runtimeLocalSkillsKeys.forRuntime(runtimeId)
+      ? runtimeLocalSkillsKeys.forRuntime(runtimeId, agentId, revision)
       : runtimeLocalSkillsKeys.all(),
-    queryFn: () => resolveRuntimeLocalSkills(runtimeId as string),
+    queryFn: () => resolveRuntimeLocalSkills(runtimeId as string, agentId),
     enabled: Boolean(runtimeId),
     staleTime: 30_000,
     retry: false,

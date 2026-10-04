@@ -814,6 +814,23 @@ func existingHermesExternalDirs(doc *yaml.Node) []string {
 	return out
 }
 
+// HermesSkillRoots returns the same external roots used by task overlays.
+// Discovery reads configuration without creating an overlay or copying credentials.
+func HermesSkillRoots(sourceHome string, env map[string]string) ([]string, error) {
+	data, err := os.ReadFile(filepath.Join(sourceHome, "config.yaml"))
+	if os.IsNotExist(err) {
+		return computeHermesExternalDirs(sourceHome, nil, env), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	return computeHermesExternalDirs(sourceHome, existingHermesExternalDirs(&doc), env), nil
+}
+
 // setHermesExternalDirs sets skills.external_dirs on the config document,
 // creating the skills mapping if needed and preserving every other setting.
 func setHermesExternalDirs(doc *yaml.Node, dirs []string) error {

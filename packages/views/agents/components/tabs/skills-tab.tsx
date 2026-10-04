@@ -71,7 +71,7 @@ export function SkillsTab({
     canReadRuntime
       ? runtime.id
       : null;
-  const runtimeQuery = useQuery(runtimeCapabilitiesOptions(runtimeId));
+  const runtimeQuery = useQuery(runtimeCapabilitiesOptions(runtimeId, agent.id, agent.updated_at));
   const [busyId, setBusyId] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [selected, setSelected] = useState<SelectedSkill>(null);

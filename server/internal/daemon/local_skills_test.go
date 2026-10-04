@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1448,5 +1449,62 @@ func TestCollectLocalSkillFiles_ValidUTF8TextPassesThroughUntouched(t *testing.T
 		if f.Path == "notes.txt" && f.Content != body {
 			t.Errorf("notes.txt content = %q, want %q", f.Content, body)
 		}
+	}
+}
+
+// The discovery catalog must agree with task profile/external-root resolution,
+// while agents on the same runtime keep their private profiles separate (#9050).
+func TestHermesAgentScopedLocalSkills(t *testing.T) {
+	home := t.TempDir()
+	setTestUserHome(t, home)
+	base := filepath.Join(home, ".hermes")
+	t.Setenv("HERMES_HOME", base)
+	for _, name := range []string{"admin", "research"} {
+		profile := filepath.Join(base, "profiles", name)
+		writeTestLocalSkill(t, filepath.Join(profile, "skills"), name, map[string]string{"SKILL.md": "---\nname: " + name + "\n---\nprofile"})
+		writeTestLocalSkill(t, filepath.Join(profile, "external"), name+"-external", map[string]string{"SKILL.md": "external"})
+		if err := os.WriteFile(filepath.Join(profile, "config.yaml"), []byte(`skills:
+  external_dirs: ["${HERMES_HOME}/external"]
+`), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"admin", "research"} {
+		got, supported, err := listRuntimeLocalSkillsForAgent("hermes", &protocol.LocalSkillAgentScope{AgentID: name, CustomArgs: []string{"-p", name}})
+		if err != nil || !supported {
+			t.Fatalf("%s: supported=%v err=%v", name, supported, err)
+		}
+		keys := []string{}
+		for _, s := range got {
+			keys = append(keys, s.Key)
+		}
+		if !reflect.DeepEqual(keys, []string{name, name + "-external"}) {
+			t.Fatalf("%s catalog = %v", name, keys)
+		}
+	}
+	// The agent's home override must resolve roots independently of the daemon.
+	override := t.TempDir()
+	writeTestLocalSkill(t, filepath.Join(override, "skills"), "override-only", map[string]string{"SKILL.md": "override"})
+	gotOverride, _, overrideErr := listRuntimeLocalSkillsForAgent("hermes", &protocol.LocalSkillAgentScope{CustomEnv: map[string]string{"HERMES_HOME": override}})
+	if overrideErr != nil || len(gotOverride) != 1 || gotOverride[0].Key != "override-only" {
+		t.Fatalf("override catalog: %v %v", gotOverride, overrideErr)
+	}
+	// An unscoped import explicitly uses the daemon-selected profile; discovery
+	// and import must pick the same external-root content.
+	if err := os.WriteFile(filepath.Join(base, "active_profile"), []byte("admin"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	defaultSkills, _, defaultErr := listRuntimeLocalSkills("hermes")
+	bundle, _, importErr := loadRuntimeLocalSkillBundle("hermes", "admin-external")
+	if defaultErr != nil || len(defaultSkills) != 2 || importErr != nil || bundle.SourcePath != defaultSkills[1].SourcePath {
+		t.Fatalf("default/import catalog disagreement: %v %v %v", defaultSkills, defaultErr, importErr)
+	}
+	// A fixed launch selector uses the same argv parsing as task execution.
+	got, _, err := listRuntimeLocalSkillsForAgent("hermes", &protocol.LocalSkillAgentScope{FixedArgs: []string{"-p", "admin"}})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("fixed profile: %v %v", got, err)
+	}
+	if _, _, err := listRuntimeLocalSkillsForAgent("hermes", &protocol.LocalSkillAgentScope{CustomArgs: []string{"-p", "missing"}}); err == nil {
+		t.Fatal("missing profile silently fell back")
 	}
 }

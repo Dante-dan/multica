@@ -119,7 +119,7 @@ func countSkillFiles(t *testing.T, skillID string) int {
 func TestInMemoryLocalSkillListStore_PreservesSummaries(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryLocalSkillListStore()
-	req, err := store.Create(ctx, "runtime-xyz")
+	req, err := store.Create(ctx, "runtime-xyz", "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestInMemoryLocalSkillListStore_PreservesSummaries(t *testing.T) {
 func TestInMemoryLocalSkillListStore_TimesOutRunningRequests(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryLocalSkillListStore()
-	req, err := store.Create(ctx, "runtime-xyz")
+	req, err := store.Create(ctx, "runtime-xyz", "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -754,4 +754,19 @@ func TestCleanOptionalString(t *testing.T) {
 
 func ptr[T any](value T) *T {
 	return &value
+}
+
+func TestLocalSkillListStorePreservesAgentScope(t *testing.T) {
+	ctx := context.Background()
+	s := NewInMemoryLocalSkillListStore()
+	for _, id := range []string{"admin", "research"} {
+		req, err := s.Create(ctx, "same-runtime", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.PopPending(ctx, "same-runtime")
+		if err != nil || got == nil || got.ID != req.ID || got.AgentID != id {
+			t.Fatalf("scope lost: %+v %v", got, err)
+		}
+	}
 }

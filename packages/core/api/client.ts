@@ -2691,8 +2691,9 @@ export class ApiClient {
 
   async initiateListLocalSkills(
     runtimeId: string,
+    agentId?: string,
   ): Promise<RuntimeLocalSkillListRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/local-skills`, {
+    return this.fetch(`/api/runtimes/${runtimeId}/local-skills${agentId ? `?agent_id=${encodeURIComponent(agentId)}` : ""}`, {
       method: "POST",
     });
   }
