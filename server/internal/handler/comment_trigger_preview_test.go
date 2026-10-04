@@ -1156,3 +1156,44 @@ func TestPreviewCommentTriggers_MentionedSquadLeaderAndSuppress(t *testing.T) {
 		t.Fatalf("suppressed mentioned squad leader queued tasks = %d, want 0", got)
 	}
 }
+
+// Regression for GH #3032: automation can update parked work without implicitly
+// waking its pre-assigned executor. Explicit mentions remain intentional calls.
+func TestCommentTriggers_BacklogAssigneeFallback(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	for _, assigneeType := range []string{"agent", "squad"} {
+		for _, status := range []string{"backlog", "todo", "done"} {
+			for _, mention := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/mention=%v", assigneeType, status, mention), func(t *testing.T) {
+					agentID := createHandlerTestAgent(t, "Backlog Comment Executor", nil)
+					assigneeID := agentID
+					if assigneeType == "squad" {
+						assigneeID = dbfx.Squad(t, "Backlog Comment Squad", agentID)
+					}
+					issueID := dbfx.Issue(t, "parked automation update", testutil.Cols{"status": status, "assignee_type": assigneeType, "assignee_id": assigneeID})
+					content := "automation status update"
+					if mention {
+						content = fmt.Sprintf("[@Executor](mention://agent/%s) please investigate", agentID)
+					}
+					body := map[string]any{"content": content}
+					want := 0
+					if status != "backlog" || mention {
+						want = 1
+					}
+					preview := previewCommentTriggersForTest(t, issueID, body)
+					if want == 0 {
+						requirePreviewAgents(t, preview)
+					} else {
+						requirePreviewAgents(t, preview, agentID)
+					}
+					postCommentForTriggerPreviewTest(t, issueID, body)
+					if got := countQueuedCommentTriggerTasks(t, issueID, agentID); got != want {
+						t.Fatalf("queued tasks = %d, want %d", got, want)
+					}
+				})
+			}
+		}
+	}
+}
