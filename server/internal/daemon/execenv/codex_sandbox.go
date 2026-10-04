@@ -203,15 +203,23 @@ func codexSandboxPolicyForWindows(state windowsSandboxConfig) codexSandboxPolicy
 // safe "absent". Unparseable TOML is likewise undecidable — Codex would reject
 // the same file. An absent windows.sandbox key is a genuine "absent".
 func windowsSandboxFromConfig(config string) windowsSandboxConfig {
+	value, err := windowsSandboxValueFromConfig(config)
+	if err != nil {
+		return windowsSandboxUndecidable
+	}
+	return classifyWindowsSandboxValue(value)
+}
+
+func windowsSandboxValueFromConfig(config string) (string, error) {
 	var probe struct {
 		Windows struct {
 			Sandbox string `toml:"sandbox"`
 		} `toml:"windows"`
 	}
 	if err := toml.Unmarshal([]byte(config), &probe); err != nil {
-		return windowsSandboxUndecidable
+		return "", err
 	}
-	return classifyWindowsSandboxValue(probe.Windows.Sandbox)
+	return probe.Windows.Sandbox, nil
 }
 
 // codexConfigOverrideValueRe matches the value token of a Codex `-c` /
@@ -228,7 +236,13 @@ var codexWindowsSandboxOverrideRe = regexp.MustCompile(`^\s*windows\s*\.\s*sandb
 // buildCodexArgs: inline (`-c=windows.sandbox=x`) and two-token
 // (`-c windows.sandbox=x`) forms, last occurrence winning (Codex is last-wins).
 func windowsSandboxFromCustomArgs(args []string) windowsSandboxConfig {
-	state := windowsSandboxAbsent
+	value, _ := windowsSandboxValueFromCustomArgs(args)
+	return classifyWindowsSandboxValue(value)
+}
+
+func windowsSandboxValueFromCustomArgs(args []string) (string, bool) {
+	selected := ""
+	found := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		flag := arg
@@ -254,10 +268,11 @@ func windowsSandboxFromCustomArgs(args []string) windowsSandboxConfig {
 		}
 		// A windows.sandbox override token: take the part after its first `=`.
 		if eq := strings.Index(value, "="); eq >= 0 {
-			state = classifyWindowsSandboxValue(value[eq+1:])
+			selected = value[eq+1:]
+			found = true
 		}
 	}
-	return state
+	return selected, found
 }
 
 // classifyWindowsSandboxValue maps a raw windows.sandbox value (from config.toml

@@ -424,6 +424,31 @@ make daemon
 The daemon authenticates using the CLI's stored token (`multica login`).
 It registers runtimes for all watched workspaces from the CLI config.
 
+### Codex Elevated Windows Sandbox State
+
+**Experimental reference branch, not a production fix:** the directory-sharing
+prototype below is incompatible with Codex's installed-service `ProvisionOnly`
+path, which rejects reparse points. Pure Go tests and Windows cross-compilation
+do not establish native setup/ACL compatibility. Do not deploy this branch.
+
+Tasks with `windows.sandbox = "elevated"` share only Codex's `.sandbox/` and
+`.sandbox-secrets/` directories with the normal Codex home (`CODEX_HOME`, or
+`~/.codex`). Codex's readiness marker and encrypted credentials describe fixed
+machine-wide accounts, so independent copies can invalidate each other when
+those accounts are provisioned again. Task configuration, sessions and skills
+remain separate. Explicit `-c windows.sandbox=unelevated` overrides do not link
+this state, and the daemon does not change the selected sandbox mode.
+
+Directory links use the existing Windows junction fallback and must succeed
+before launch. On reuse, old task-local sandbox directories are retained beside
+the links with a `.task-local` suffix for diagnostics; their contents never
+replace the normal home's state. Codex continues to own setup, version checks
+and per-command ACL refreshes. Codex 0.160.0 already serializes full provisioning
+with its global setup mutex; sharing state is intended to prevent independent
+homes from subsequently reprovisioning the same accounts with different saved
+credentials. It does not repair helper dependencies or provide a supported
+shared-state interface for installed-service provisioning.
+
 ## Full-Stack Isolated Testing
 
 Running the complete stack — backend, frontend and daemon — from source, with

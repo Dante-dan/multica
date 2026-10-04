@@ -284,6 +284,11 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 	winState := windowsSandboxAbsent
 	if resolveGOOS(opts.GOOS) == "windows" {
 		winState = resolveWindowsSandboxState(configFile, configSyncErr, statSharedCodexConfig(sharedHome), opts.CodexCustomArgs, logger)
+		if winState == windowsSandboxNative {
+			if err := prepareCodexWindowsSandboxHome(codexHome, sharedHome, configFile, opts.CodexCustomArgs); err != nil {
+				return fmt.Errorf("prepare codex Windows sandbox state: %w", err)
+			}
+		}
 	}
 	policy := codexSandboxPolicyForConfig(opts.GOOS, opts.CodexVersion, winState)
 	if err := ensureCodexSandboxConfig(configFile, policy, opts.CodexVersion, logger); err != nil {
