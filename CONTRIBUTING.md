@@ -648,3 +648,17 @@ Worktree:
 ```bash
 make check-worktree
 ```
+
+### Runtime skill discovery scopes
+
+`POST /api/runtimes/{runtimeId}/local-skills?agent_id={agentId}` discovers the
+inherited skill catalog for an agent currently assigned to that runtime. Hermes
+uses the agent's profile arguments, home override and profile external roots,
+with the same resolver as task execution. Agent detail uses this scope and keeps
+its query cache separate by agent and configuration revision. Scoped discovery
+requires an updated daemon; an older daemon's unscoped result is rejected rather
+than displayed as that agent's catalog.
+
+Without `agent_id`, discovery and skill imports use the daemon's default/sticky
+Hermes profile and preserve the universal skill fallback. A runtime-wide import
+does not select an individual agent's private profile.
