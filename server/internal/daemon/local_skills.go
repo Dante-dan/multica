@@ -482,6 +482,7 @@ func collectLocalSkillFiles(skillDir string, includeContent bool) ([]SkillFileDa
 }
 
 func hermesSkillRoots(scope *protocol.LocalSkillAgentScope) ([]localSkillRoot, error) {
+	strict := scope != nil
 	if scope == nil {
 		scope = &protocol.LocalSkillAgentScope{}
 	}
@@ -489,9 +490,12 @@ func hermesSkillRoots(scope *protocol.LocalSkillAgentScope) ([]localSkillRoot, e
 	env := sanitizeAgentEnv(scope.CustomEnv)
 	res := execenv.ResolveHermesProfile(env["HERMES_HOME"], sel.Name, sel.Found, sel.Inline)
 	if res.Err != nil {
+		if !strict {
+			return nil, nil
+		} // Preserve unscoped universal fallback.
 		return nil, res.Err
 	}
-	if res.MustExist {
+	if strict && res.MustExist {
 		info, statErr := os.Stat(res.SourceHome)
 		if statErr != nil {
 			return nil, statErr
