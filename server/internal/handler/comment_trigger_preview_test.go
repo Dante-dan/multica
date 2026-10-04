@@ -11,6 +11,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
+// Routing fixtures represent active work; backlog parking is covered explicitly.
 func createCommentTriggerPreviewIssue(t *testing.T, title string, assigneeType, assigneeID string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -35,8 +36,8 @@ func createCommentTriggerPreviewIssue(t *testing.T, title string, assigneeType, 
 
 	var issueID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, assignee_type, assignee_id, number, last_activity_at)
-		VALUES ($1, 'member', $2, $3, $4, $5, $6, now())
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, assignee_type, assignee_id, number, last_activity_at, status)
+		VALUES ($1, 'member', $2, $3, $4, $5, $6, now(), 'todo')
 		RETURNING id
 	`, testWorkspaceID, testUserID, title, assigneeTypeArg, assigneeIDArg, number).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)

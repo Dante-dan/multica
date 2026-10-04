@@ -3071,8 +3071,9 @@ func (h *Handler) routeAssigneeFallback(ctx context.Context, issue db.Issue, aut
 func (h *Handler) routeAssignedSquadLeaderFallback(ctx context.Context, issue db.Issue, authorType, authorID string, opts commentTriggerComputeOptions) (commentAgentTrigger, bool) {
 	// Checked here as well as in routeAssigneeFallback: an agent-authored
 	// comment reaches this one directly, without passing through that caller.
-	// Backlog parks an assigned squad just as it parks an assigned agent.
-	if issue.TriageState.Valid || issuestatus.Effective(ctx, h.Queries, issue.WorkspaceID, issue.Status) == issuestatus.Backlog {
+	// Backlog parks member status updates, but a delegated worker result must
+	// still return to its leader (MUL-4015), even if the issue was parked.
+	if issue.TriageState.Valid || (authorType == "member" && issuestatus.Effective(ctx, h.Queries, issue.WorkspaceID, issue.Status) == issuestatus.Backlog) {
 		return commentAgentTrigger{}, false
 	}
 	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
