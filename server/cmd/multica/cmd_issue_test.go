@@ -4235,8 +4235,8 @@ func TestIssueReadCommandsUseInjectedTaskToken(t *testing.T) {
 		t.Fatalf("issue runs: %v", err)
 	}
 
-	if len(gotPaths) != 5 {
-		t.Fatalf("request paths = %v, want issue list + get resolution/get + runs resolution/list", gotPaths)
+	if len(gotPaths) != 4 {
+		t.Fatalf("request paths = %v, want issue list + get detail + runs resolution/list", gotPaths)
 	}
 }
 

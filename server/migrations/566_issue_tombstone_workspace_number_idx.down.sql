@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS issue_tombstone_workspace_number_idx;

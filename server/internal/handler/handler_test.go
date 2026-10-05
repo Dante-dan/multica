@@ -420,12 +420,66 @@ func TestIssueCRUD(t *testing.T) {
 
 	// Verify deleted
 	w = httptest.NewRecorder()
-	req = newRequest("GET", "/api/issues/"+issueID, nil)
+	req = newRequest("GET", "/api/issues/"+issueID+"?include_deleted=true", nil)
 	req = withURLParam(req, "id", issueID)
 	testHandler.GetIssue(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("GetIssue after delete: expected 404, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetIssue after delete: expected tombstone 200, got %d: %s", w.Code, w.Body.String())
 	}
+	var tombstone map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&tombstone); err != nil {
+		t.Fatal(err)
+	}
+	if tombstone["id"] != issueID || tombstone["status"] != "deleted" || tombstone["deleted_at"] == nil {
+		t.Fatalf("invalid tombstone: %v", tombstone)
+	}
+	if _, ok := tombstone["title"]; ok {
+		t.Fatal("tombstone leaked deleted content")
+	}
+	// Identifier resolution must return the same retained identity for the CLI.
+	for _, key := range []string{created.Identifier, strings.ToLower(created.Identifier)} {
+		w = httptest.NewRecorder()
+		req = withURLParam(newRequest("GET", "/api/issues/"+key+"?include_deleted=true", nil), "id", key)
+		testHandler.GetIssue(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("tombstone by %s: %d: %s", key, w.Code, w.Body.String())
+		}
+	}
+	for _, key := range []string{"WRONG-" + fmt.Sprint(created.Number), strings.TrimSuffix(created.Identifier, fmt.Sprint(created.Number)) + "2147483647"} {
+		w = httptest.NewRecorder()
+		req = withURLParam(newRequest("GET", "/api/issues/"+key+"?include_deleted=true", nil), "id", key)
+		testHandler.GetIssue(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("unknown %s: expected 404, got %d", key, w.Code)
+		}
+	}
+	// A tombstone is not a writable issue.
+	w = httptest.NewRecorder()
+	req = withURLParam(newRequest("PUT", "/api/issues/"+issueID, map[string]any{"title": "resurrect"}), "id", issueID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("update tombstone: expected 404, got %d", w.Code)
+	}
+	// Even a valid archived UUID is invisible from another workspace.
+	otherWorkspace := dbfx.Workspace(t, "Tombstone isolation", "tombstone-isolation-"+issueID)
+	w = httptest.NewRecorder()
+	req = withURLParam(newRequest("GET", "/api/issues/"+issueID+"?include_deleted=true", nil), "id", issueID)
+	req.Header.Set("X-Workspace-ID", otherWorkspace)
+	testHandler.GetIssue(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("foreign tombstone: expected 404, got %d", w.Code)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM issue_tombstone WHERE workspace_id = $1 AND id = $2", testWorkspaceID, issueID)
+	})
+	// Installed clients using the existing detail contract keep the 404 response.
+	w = httptest.NewRecorder()
+	req = withURLParam(newRequest("GET", "/api/issues/"+issueID, nil), "id", issueID)
+	testHandler.GetIssue(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("legacy detail: expected 404, got %d", w.Code)
+	}
+
 }
 
 // TestDeleteIssueByIdentifier guards against #1661 — DELETE /api/issues/{id}

@@ -970,6 +970,13 @@ type IssueToLabel struct {
 	LabelID pgtype.UUID `json:"label_id"`
 }
 
+type IssueTombstone struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Number      int32              `json:"number"`
+	DeletedAt   pgtype.Timestamptz `json:"deleted_at"`
+}
+
 type IssueVcsPullRequest struct {
 	IssueID       pgtype.UUID        `json:"issue_id"`
 	PullRequestID pgtype.UUID        `json:"pull_request_id"`

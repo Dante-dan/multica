@@ -1092,13 +1092,19 @@ func runIssueGet(cmd *cobra.Command, args []string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
+	// The read-only detail request can opt into deletion identity. Other
+	// commands keep using the live-issue resolver and cannot write tombstones.
+	issueID := strings.TrimSpace(args[0])
+	if !looksLikeIssueIdentifier(issueID) {
+		issueRef, err := resolveIssueRef(ctx, client, issueID)
+		if err != nil {
+			return fmt.Errorf("resolve issue: %w", err)
+		}
+		issueID = issueRef.ID
 	}
 
 	var issue map[string]any
-	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID, &issue); err != nil {
+	if err := client.GetJSON(ctx, "/api/issues/"+url.PathEscape(issueID)+"?include_deleted=true", &issue); err != nil {
 		return fmt.Errorf("get issue: %w", err)
 	}
 

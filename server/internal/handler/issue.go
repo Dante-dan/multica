@@ -2471,6 +2471,9 @@ ORDER BY
 
 func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if r.URL.Query().Get("include_deleted") == "true" && h.serveIssueTombstone(w, r, id) {
+		return
+	}
 	issue, ok := h.loadIssueForUser(w, r, id)
 	if !ok {
 		return

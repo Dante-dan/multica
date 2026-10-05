@@ -1279,6 +1279,10 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			run:  func() error { return qtx.DeleteWorkspaceIssueRoots(ctx, requester.WorkspaceID) },
 		},
 		{
+			name: "delete issue tombstones",
+			run:  func() error { return qtx.DeleteWorkspaceIssueTombstones(ctx, requester.WorkspaceID) },
+		},
+		{
 			// issue_status carries no foreign key by project rule, so its rows
 			// are swept explicitly. Placed after the issue deletes so no issue
 			// row outlives the catalog its status key resolves against.

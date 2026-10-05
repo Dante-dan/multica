@@ -104,7 +104,11 @@ func newResolveTestServer(t *testing.T, page ...map[string]any) *resolveTestServ
 			s.issueQueries = append(s.issueQueries, r.URL.Query())
 			_ = json.NewEncoder(w).Encode(map[string]any{"issues": s.page, "total": len(s.page)})
 		case "/api/issues/MUL-1":
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "issue-1", "identifier": "MUL-1"})
+			if r.URL.Query().Get("include_deleted") == "true" {
+				_ = json.NewEncoder(w).Encode(s.page[0])
+			} else {
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "issue-1", "identifier": "MUL-1"})
+			}
 		case "/api/issues/issue-1":
 			_ = json.NewEncoder(w).Encode(s.page[0])
 		case "/api/issues/issue-1/properties/" + testReviewerDefID:
@@ -551,5 +555,26 @@ func TestRunIssueListResolvePropertiesWithFields(t *testing.T) {
 	}
 	if srv.propertiesCalls != 0 || srv.membersCalls != 0 {
 		t.Errorf("plain --fields fetched: catalog %d, members %d", srv.propertiesCalls, srv.membersCalls)
+	}
+}
+
+// The issue's acceptance criteria require a machine-readable deleted state,
+// without consulting list results or parsing error prose.
+func TestRunIssueGetTombstone(t *testing.T) {
+	want := map[string]any{"id": "issue-1", "identifier": "MUL-1", "number": float64(1), "status": "deleted", "deleted_at": "2026-10-06T00:00:00Z"}
+	newResolveTestServer(t, want)
+	out, err := captureStdout(t, func() error { return runIssueGet(newIssueGetTestCmd("json", false), []string{"MUL-1"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("tombstone = %v, want %v", got, want)
+	}
+	if _, err := captureStdout(t, func() error { return runIssueGet(newIssueGetTestCmd("json", false), []string{"MUL-99999"}) }); err == nil {
+		t.Fatal("never-issued identifier should still fail")
 	}
 }

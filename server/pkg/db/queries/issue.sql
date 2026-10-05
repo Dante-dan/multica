@@ -476,7 +476,11 @@ LIMIT 1;
 -- itself is correctly untouched, but the links are already gone) — the exact
 -- cross-tenant leak the #1661 guard above exists to prevent.
 WITH target AS (
-    SELECT issue.id FROM issue WHERE issue.id = $1 AND issue.workspace_id = $2
+    SELECT issue.id, issue.workspace_id, issue.number FROM issue WHERE issue.id = $1 AND issue.workspace_id = $2
+),
+archived_identity AS (
+    INSERT INTO issue_tombstone (id, workspace_id, number)
+    SELECT id, workspace_id, number FROM target
 ),
 cleared_wakeup_receipts AS (
  DELETE FROM issue_wakeup_receipt WHERE wakeup_id IN (SELECT id FROM issue_wakeup WHERE issue_id IN (SELECT target.id FROM target))

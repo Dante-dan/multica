@@ -565,6 +565,17 @@ multica issue get <id> --output json
 multica issue get <id> --resolve-properties   # property names beside the ids, as in issue list
 ```
 
+`issue get` includes deletion identities. For issues deleted after the tombstone
+migration, JSON contains only `id`, `identifier`, `number`, `status: "deleted"`
+and `deleted_at`; deleted content is not retained. A never-issued key remains
+not found. Issues hard-deleted before the migration cannot be reconstructed
+from number gaps.
+
+The detail API exposes this read-only shape with
+`GET /api/issues/<id-or-identifier>?include_deleted=true`. Without that parameter,
+existing clients retain the normal detail contract and deleted issues return
+404. Lists and write endpoints never treat tombstones as live issues.
+
 ### Create Issue
 
 ```bash
