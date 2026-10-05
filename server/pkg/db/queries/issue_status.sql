@@ -87,6 +87,18 @@ WHERE id = sqlc.arg('id')::uuid
   AND archived_at IS NULL
 RETURNING *;
 
+-- name: UpdateBuiltInIssueStatusDisplayName :one
+-- Display aliases never alter canonical names, keys or workflow definitions.
+-- Empty restores each client's localized default label.
+UPDATE issue_status SET
+    display_name = sqlc.arg('display_name')::text,
+    updated_at = now()
+WHERE id = sqlc.arg('id')::uuid
+  AND workspace_id = sqlc.arg('workspace_id')::uuid
+  AND is_system = TRUE
+  AND archived_at IS NULL
+RETURNING *;
+
 -- name: ArchiveIssueStatusEntry :one
 -- Built-ins are excluded by is_system: archiving one would delete its
 -- category's behavior definition.

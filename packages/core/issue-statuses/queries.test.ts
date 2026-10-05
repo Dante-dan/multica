@@ -18,6 +18,15 @@ function entry(key: string, category: string, name = key, archivedAt: string | n
 }
 
 describe("buildIssueStatusCatalog", () => {
+  it("applies workspace display names without changing stable status behavior", () => {
+    const builtin = { ...entry("todo", "unstarted", "Todo"), is_system: true };
+    const renamed = buildIssueStatusCatalog([{ ...builtin, display_name: "待处理" }]);
+    expect(renamed.labelOf("todo")).toBe("待处理");
+    expect(renamed.categoryOf("todo")).toBe("unstarted");
+    expect(renamed.activeStatuses[0]?.key).toBe("todo");
+    expect(buildIssueStatusCatalog([builtin]).labelOf("todo")).toBe("Todo");
+    expect(buildIssueStatusCatalog([{ ...builtin, display_name: "" }]).labelOf("todo")).toBe("Todo");
+  });
   it("resolves custom geometry including archived statuses but never overrides built-ins", () => {
     const catalog = buildIssueStatusCatalog([
       { ...entry("qa", "started"), icon: "three_quarters" },

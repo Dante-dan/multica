@@ -97,6 +97,12 @@ describe("issueColumnCategory", () => {
 });
 
 describe("buildIssueStatusCatalog", () => {
+  it("preserves workspace aliases verbatim and restores translated default keys", () => {
+    const builtin = entry("todo", "unstarted", { is_system: true, display_name: "my:待处理" });
+    expect(buildIssueStatusCatalog([builtin]).labelOf("todo")).toBe("my:待处理");
+    expect(buildIssueStatusCatalog([{ ...builtin, display_name: "" }]).labelOf("todo")).toBe("issues:status.todo");
+    expect(buildIssueStatusCatalog([builtin]).categoryOf("todo")).toBe("unstarted");
+  });
   // A status has to render on the very first paint. Built-in keys are their own
   // category, so an unloaded catalog still resolves all 7 — which is what keeps
   // a workspace with no custom statuses identical before the request lands.

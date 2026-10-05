@@ -188,6 +188,20 @@ describe("IssueStatusesTab", () => {
     },
   );
 
+  it("edits and resets only the built-in display alias", async () => {
+    catalog = [{ ...BUILT_IN_IN_REVIEW, display_name: "Reviewing" }];
+    render(<IssueStatusesTab />);
+    fireEvent.click(screen.getByLabelText(en.issue_statuses.actions.open.replace("{{name}}", "in_review")));
+    fireEvent.click(await screen.findByRole("menuitem", { name: en.issue_statuses.actions.edit }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText(en.issue_statuses.editor.name), { target: { value: "  Peer review  " } });
+    fireEvent.click(within(dialog).getByRole("button", { name: en.issue_statuses.editor.save }));
+    expect(updateMutate).toHaveBeenCalledWith({ id: "in_review", display_name: "Peer review" }, expect.any(Object));
+    fireEvent.click(within(dialog).getByRole("button", { name: en.issue_statuses.editor.reset_display_name }));
+    expect(updateMutate).toHaveBeenLastCalledWith({ id: "in_review", display_name: "" }, expect.any(Object));
+    expect(within(dialog).queryByLabelText(en.issue_statuses.editor.color)).toBeNull();
+  });
+
   it("can reset a saved shape to the existing category default", async () => {
     catalog = [entry({ key: "qa", name: "QA", icon: "slash" })];
     render(<IssueStatusesTab />);
@@ -454,7 +468,7 @@ describe("IssueStatusesTab", () => {
     await user.click(trigger);
     const edit = await screen.findByRole("menuitem", { name: en.issue_statuses.actions.edit });
     const archive = screen.getByRole("menuitem", { name: en.issue_statuses.actions.archive });
-    expect(edit).toHaveAttribute("aria-disabled", "true");
+    expect(edit).not.toHaveAttribute("aria-disabled", "true");
     expect(archive).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByText(en.issue_statuses.built_in_locked)).toBeInTheDocument();
     // Reordering stays available for built-ins.
@@ -462,7 +476,11 @@ describe("IssueStatusesTab", () => {
       screen.getByRole("menuitem", { name: en.issue_statuses.actions.move_down }),
     ).not.toHaveAttribute("aria-disabled", "true");
     await user.click(edit);
-    expect(screen.queryByRole("dialog")).toBeNull();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByLabelText(en.issue_statuses.editor.description)).toBeNull();
+    fireEvent.change(within(dialog).getByLabelText(en.issue_statuses.editor.name), { target: { value: "Awaiting approval" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: en.issue_statuses.editor.save }));
+    expect(updateMutate).toHaveBeenCalledWith({ id: "in_review", display_name: "Awaiting approval" }, expect.anything());
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 });

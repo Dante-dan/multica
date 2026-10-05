@@ -266,6 +266,8 @@ export function buildIssueStatusCatalog(
     colorOf: (statusKey) => issueStatusColor(byKey.get(statusKey)),
     iconOf: (statusKey) => byKey.get(statusKey)?.icon ?? null,
     labelOf: (statusKey) => {
+      const override = byKey.get(statusKey)?.display_name;
+      if (override) return override;
       // Built-in first, so a workspace that never opened status settings reads
       // exactly as it did before the catalog existed.
       if (isBuiltInIssueStatus(statusKey)) return STATUS_LABEL[statusKey];

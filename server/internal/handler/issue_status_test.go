@@ -338,6 +338,31 @@ func TestBuiltInStatusesAreImmutable(t *testing.T) {
 	})
 }
 
+// Display aliases are workspace presentation, not workflow definitions.
+func TestBuiltInStatusDisplayName(t *testing.T) {
+ ctx := context.Background()
+ seedTestCatalog(t)
+ original, err := testHandler.Queries.GetIssueStatusEntryByKey(ctx, db.GetIssueStatusEntryByKeyParams{WorkspaceID: parseUUID(testWorkspaceID), Key: "todo"})
+ if err != nil { t.Fatal(err) }
+ for _, name := range []string{"  待处理  ", ""} {
+  var got IssueStatusResponse
+  testutil.Call(t, testHandler.UpdateIssueStatus, withURLParam(newRequest(http.MethodPatch, "/api/issue-statuses/"+uuidToString(original.ID), map[string]any{"display_name": name}), "id", uuidToString(original.ID))).Want(http.StatusOK).JSON(&got)
+  if got.DisplayName != strings.TrimSpace(name) { t.Fatalf("alias = %q", got.DisplayName) }
+  current, err := testHandler.Queries.GetIssueStatusEntryByKey(ctx, db.GetIssueStatusEntryByKeyParams{WorkspaceID: original.WorkspaceID, Key: original.Key})
+  if err != nil { t.Fatal(err) }
+  if current.ID != original.ID || current.Name != original.Name || current.Key != original.Key || current.Category != original.Category || current.Position != original.Position { t.Fatal("alias changed stable workflow definition") }
+ }
+ for _, body := range []map[string]any{
+  {"display_name": "Alias", "color": "#123456"},
+  {"display_name": "Alias", "name": "Renamed"},
+ } {
+  testutil.Call(t, testHandler.UpdateIssueStatus, withURLParam(newRequest(http.MethodPatch, "/api/issue-statuses/"+uuidToString(original.ID), body), "id", uuidToString(original.ID))).Want(http.StatusForbidden)
+ }
+ testutil.Call(t, testHandler.UpdateIssueStatus, withURLParam(newRequest(http.MethodPatch, "/api/issue-statuses/"+uuidToString(original.ID), map[string]any{"display_name": strings.Repeat("界", 65)}), "id", uuidToString(original.ID))).Want(http.StatusBadRequest)
+ custom := createTestCustomStatus(t, "display_alias_custom", "unstarted")
+ testutil.Call(t, testHandler.UpdateIssueStatus, withURLParam(newRequest(http.MethodPatch, "/api/issue-statuses/"+uuidToString(custom.ID), map[string]any{"display_name": "Alias"}), "id", uuidToString(custom.ID))).Want(http.StatusBadRequest)
+}
+
 // In-use statuses cannot be archived, including successful and canceled work.
 func TestArchiveRequiresMovingExistingIssues(t *testing.T) {
 	for _, category := range issuestatus.Categories() {

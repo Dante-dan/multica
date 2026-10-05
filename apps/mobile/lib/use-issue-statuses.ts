@@ -40,7 +40,7 @@ export function useIssueStatuses(): IssueStatusCatalog {
         const label = catalog.labelOf(key);
         // Only i18next keys are translatable. A custom status name may itself
         // contain a colon, so its catalog name must pass through unchanged.
-        return isBuiltInIssueStatus(key) ? t(label) : label;
+        return isBuiltInIssueStatus(key) && !catalog.entryOf(key)?.display_name ? t(label) : label;
       },
     };
   }, [data, t]);

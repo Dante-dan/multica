@@ -43,7 +43,9 @@
       "cancel": "取消",
       "save": "保存",
       "saving": "保存中…",
-      "save_failed": "状态保存失败。"
+      "save_failed": "状态保存失败。",
+      "edit_display_name": "修改显示名称",
+      "reset_display_name": "恢复默认名称"
     },
     "archive_dialog": {
       "retry": "重试归档",
@@ -79,7 +81,7 @@
       "cancelled": "决定不做。"
     },
     "pr_auto_complete_badge": "PR 合并后自动进入",
-    "built_in_locked": "内置状态驱动系统行为，不能编辑或归档，但可以调整顺序。"
+    "built_in_locked": "只能编辑显示名称。内置行为不能改，也不能归档；仍可调整顺序。"
   },
   "wakeups": {
     "description": "平台对所有任务生效的规则。每个任务可以在自己的「唤醒」区域单独修改。",

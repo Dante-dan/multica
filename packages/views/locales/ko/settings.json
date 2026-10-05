@@ -43,7 +43,9 @@
       "cancel": "취소",
       "save": "저장",
       "saving": "저장 중…",
-      "save_failed": "상태를 저장하지 못했습니다."
+      "save_failed": "상태를 저장하지 못했습니다.",
+      "edit_display_name": "표시 이름 편집",
+      "reset_display_name": "기본 이름으로 재설정"
     },
     "archive_dialog": {
       "retry": "보관 다시 시도",
@@ -79,7 +81,7 @@
       "cancelled": "진행하지 않기로 함."
     },
     "pr_auto_complete_badge": "PR 병합 시 자동 설정",
-    "built_in_locked": "기본 상태는 시스템 동작에 쓰이므로 편집하거나 보관할 수 없습니다. 순서는 바꿀 수 있습니다."
+    "built_in_locked": "표시 이름만 편집할 수 있습니다. 기본 동작은 변경하거나 보관할 수 없지만 순서는 바꿀 수 있습니다."
   },
   "wakeups": {
     "description": "모든 태스크에 적용되는 플랫폼 규칙입니다. 각 태스크의 깨우기 섹션에서 따로 바꿀 수 있습니다.",

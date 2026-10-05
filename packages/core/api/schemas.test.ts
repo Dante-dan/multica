@@ -2224,6 +2224,11 @@ describe("issue status catalog schemas", () => {
     expect(parsed.key).toBe(baseStatus.key);
     expect(parsed.icon).toBe(icon);
   });
+  it.each([undefined, null, 42, {}, "待处理"])("defaults malformed display names without losing the catalog: %s", (display_name) => {
+    const parsed = IssueStatusEntrySchema.parse({ ...baseStatus, display_name });
+    expect(parsed.display_name).toBe(typeof display_name === "string" ? display_name : "");
+    expect(parsed.key).toBe(baseStatus.key);
+  });
 
   // PATCH /api/issue-statuses/reorder returns the same catalog shape as the
   // list endpoint, so a malformed reorder response degrades the same way rather

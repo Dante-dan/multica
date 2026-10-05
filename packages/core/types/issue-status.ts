@@ -29,6 +29,8 @@ export interface IssueStatusEntry {
   key: string;
   /** Human-facing label. Editable for custom statuses; locked for built-ins. */
   name: string;
+  /** Workspace alias for a built-in label. Empty/absent uses the localized default. */
+  display_name?: string;
   description: string;
   category: IssueStatusCategory;
   /** "#rrggbb". */
@@ -70,6 +72,8 @@ export interface CreateIssueStatusRequest {
  * would strand them.
  */
 export interface UpdateIssueStatusRequest {
+  /** Built-ins only. Empty resets to the localized default. */
+  display_name?: string;
   name?: string;
   description?: string;
   color?: string;

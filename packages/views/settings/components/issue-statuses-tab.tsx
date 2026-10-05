@@ -245,14 +245,19 @@ export function IssueStatusesTab() {
         onOpenChange={(open) => !open && setCreateCategory(null)}
         category={createCategory}
       />
-      <StatusEditorDialog
+      {editing?.is_system ? <BuiltInStatusNameDialog
+        key={`${wsId}:${editing.id}`}
+        open={Boolean(editing)}
+        status={editing}
+        onOpenChange={(open) => !open && setEditing(null)}
+      /> : <StatusEditorDialog
         open={Boolean(editing)}
         onOpenChange={(open) => !open && setEditing(null)}
         category={
           editing ? normalizeIssueStatusCategory(editing.category) : null
         }
         status={editing}
-      />
+      />}
       <ArchiveStatusDialog open={archiveOpen && pendingArchive?.workspace_id === wsId} status={pendingArchive} onClose={() => setArchiveOpen(false)} onViewIssues={viewIssues} />
       <Dialog open={inspectionOpen && inspection?.workspaceId === wsId} onOpenChange={setInspectionOpen} onOpenChangeComplete={(open) => !open && setInspection(null)}>
         <DialogContent className="flex h-[85dvh] flex-col overflow-hidden sm:max-w-6xl">
@@ -526,10 +531,8 @@ function StatusRow({
               {t(($) => $.issue_statuses.actions.move_down)}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            {/* Built-ins drive system behavior, so their definition is locked.
-                Say so where the actions are instead of offering them and
-                refusing afterwards. */}
-            <DropdownMenuItem disabled={entry.is_system} onClick={onEdit}>
+            {/* Built-ins expose only a display alias; their definition stays locked. */}
+            <DropdownMenuItem onClick={onEdit}>
               <Pencil className="size-4" />
               {t(($) => $.issue_statuses.actions.edit)}
             </DropdownMenuItem>
@@ -548,6 +551,43 @@ function StatusRow({
       )}
     </div>
   );
+}
+
+function BuiltInStatusNameDialog({ open, status, onOpenChange }: {
+  open: boolean;
+  status: IssueStatusEntry;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { t } = useT("settings");
+  const update = useUpdateIssueStatus();
+  const [name, setName] = useState(status.display_name ?? "");
+  useEffect(() => { if (open) setName(status.display_name ?? ""); }, [open, status]);
+
+  const save = (displayName: string) => {
+    if (update.isPending) return;
+    update.mutate({ id: status.id, display_name: displayName }, {
+      onSuccess: () => onOpenChange(false),
+      onError: (error) => toast.error(error instanceof Error ? error.message : t(($) => $.issue_statuses.editor.save_failed)),
+    });
+  };
+
+  return <Dialog open={open} onOpenChange={onOpenChange}>
+    <DialogContent className="sm:max-w-lg">
+      <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); if (name.trim()) save(name.trim()); }}>
+        <DialogHeader><DialogTitle>{t(($) => $.issue_statuses.editor.edit_display_name)}</DialogTitle></DialogHeader>
+        <div className="space-y-2">
+          <FieldLabel htmlFor="status-display-name">{t(($) => $.issue_statuses.editor.name)}</FieldLabel>
+          <Input id="status-display-name" autoComplete="off" data-1p-ignore autoFocus maxLength={64} value={name} placeholder={status.name} onChange={(event) => setName(event.target.value)} />
+          <p className="text-caption text-muted-foreground">{t(($) => $.issue_statuses.editor.key_hint, { key: status.key })}</p>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="ghost" disabled={!status.display_name || update.isPending} onClick={() => save("")}>{t(($) => $.issue_statuses.editor.reset_display_name)}</Button>
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>{t(($) => $.issue_statuses.editor.cancel)}</Button>
+          <Button type="submit" disabled={!name.trim() || update.isPending}>{update.isPending ? t(($) => $.issue_statuses.editor.saving) : t(($) => $.issue_statuses.editor.save)}</Button>
+        </DialogFooter>
+      </form>
+    </DialogContent>
+  </Dialog>;
 }
 
 function StatusEditorDialog({
@@ -808,11 +848,12 @@ function StatusEditorDialog({
 
 function StatusIssueInspection({ status, onClose }: { status: IssueStatusEntry; onClose: () => void }) {
   const { t } = useT("settings");
+  const labelOf = useStatusLabel(useWorkspaceId());
   const [store] = useState(() => createIssueStatusListStore(status.key));
   const baseline = useMemo(() => baselineFromQuery({ statusFilters: [status.key] }), [status.key]);
   return <>
     <DialogHeader>
-      <DialogTitle>{status.name}</DialogTitle>
+      <DialogTitle>{labelOf(status.key)}</DialogTitle>
       <Button variant="ghost" className="self-start" onClick={onClose}>
         <ArrowLeft />{t(($) => $.issue_statuses.title)}
       </Button>

@@ -31,6 +31,7 @@ type IssueStatusResponse struct {
 	WorkspaceID string  `json:"workspace_id"`
 	Key         string  `json:"key"`
 	Name        string  `json:"name"`
+	DisplayName string  `json:"display_name"`
 	Description string  `json:"description"`
 	Category    string  `json:"category"`
 	Color       string  `json:"color"`
@@ -59,6 +60,7 @@ func issueStatusToResponse(s db.IssueStatus) IssueStatusResponse {
 		WorkspaceID: uuidToString(s.WorkspaceID),
 		Key:         s.Key,
 		Name:        s.Name,
+		DisplayName: s.DisplayName,
 		Description: s.Description,
 		Category:    category,
 		Color:       s.Color,
@@ -86,6 +88,7 @@ type CreateIssueStatusRequest struct {
 // immutable: changing a category would silently rewrite the machine semantics
 // of every issue already on that status, and changing a key would strand them.
 type UpdateIssueStatusRequest struct {
+	DisplayName *string  `json:"display_name"`
 	Name        *string  `json:"name"`
 	Description *string  `json:"description"`
 	Color       *string  `json:"color"`
@@ -280,9 +283,8 @@ func (h *Handler) createIssueStatusEntry(ctx context.Context, workspaceID pgtype
 	return entry, "", nil
 }
 
-// UpdateIssueStatus edits a custom status's presentation. Built-in statuses are
-// immutable in v1 — name and color included — so the default workspace looks
-// and behaves identically for everyone who never opens this settings page.
+// UpdateIssueStatus edits custom presentation or a built-in display alias.
+// Built-in keys, canonical names and workflow definitions remain immutable.
 func (h *Handler) UpdateIssueStatus(w http.ResponseWriter, r *http.Request) {
 	entry, wsUUID, member, ok := h.loadIssueStatusForAdmin(w, r)
 	if !ok {
@@ -296,7 +298,29 @@ func (h *Handler) UpdateIssueStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if entry.IsSystem {
-		writeError(w, http.StatusForbidden, "built-in statuses cannot be modified")
+		if req.DisplayName == nil || req.Name != nil || req.Description != nil || req.Color != nil || req.Icon != nil || req.Position != nil {
+			writeError(w, http.StatusForbidden, "only the display name of a built-in status can be modified")
+			return
+		}
+		displayName := strings.TrimSpace(*req.DisplayName)
+		if len([]rune(displayName)) > 64 {
+			writeError(w, http.StatusBadRequest, "display_name must be at most 64 characters")
+			return
+		}
+		updated, err := h.Queries.UpdateBuiltInIssueStatusDisplayName(r.Context(), db.UpdateBuiltInIssueStatusDisplayNameParams{
+			ID: entry.ID, WorkspaceID: wsUUID, DisplayName: displayName,
+		})
+		if err != nil {
+			slog.Warn("UpdateBuiltInIssueStatusDisplayName failed", append(logger.RequestAttrs(r), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to update status display name")
+			return
+		}
+		h.publishIssueStatusChanged(uuidToString(wsUUID), member, "updated")
+		writeJSON(w, http.StatusOK, issueStatusToResponse(updated))
+		return
+	}
+	if req.DisplayName != nil {
+		writeError(w, http.StatusBadRequest, "display_name is only supported for built-in statuses")
 		return
 	}
 	if entry.ArchivedAt.Valid {

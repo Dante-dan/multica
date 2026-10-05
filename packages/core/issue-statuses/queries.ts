@@ -207,7 +207,7 @@ export function buildIssueStatusCatalog(
     },
     labelOf: (statusKey) => {
       const entry = byKey.get(statusKey);
-      if (entry) return entry.name;
+      if (entry) return entry.display_name || entry.name;
       if (isBuiltInIssueStatus(statusKey)) return BUILT_IN_STATUS_LABEL[statusKey];
       if (isIssueStatusCategory(statusKey)) return STATUS_CONFIG[statusKey].label;
       return statusKey;

@@ -496,6 +496,7 @@ export const IssueStatusEntrySchema = z.object({
   workspace_id: z.string(),
   key: z.string(),
   name: z.string(),
+  display_name: z.string().catch("").optional().default(""),
   description: z.string().optional().default(""),
   category: z.string().transform((value) => normalizeIssueStatusCategory(value) ?? value),
   color: z.string().optional().default("#6b7280"),

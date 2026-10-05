@@ -28,10 +28,11 @@ export function useStatusLabel(wsId: string) {
 
   return useCallback(
     (statusKey: string): string => {
+      const entry = entryOf(statusKey);
+      if (entry?.display_name) return entry.display_name;
       if (isBuiltInIssueStatus(statusKey)) {
         return t(($) => $.status[statusKey as BuiltInIssueStatus]);
       }
-      const entry = entryOf(statusKey);
       if (entry) return entry.name;
       if (isIssueStatusCategory(statusKey)) {
         return t(($) => $.status_category[statusKey as IssueStatusCategory]);

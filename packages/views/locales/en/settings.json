@@ -43,7 +43,9 @@
       "cancel": "Cancel",
       "save": "Save",
       "saving": "Saving…",
-      "save_failed": "Could not save the status."
+      "save_failed": "Could not save the status.",
+      "edit_display_name": "Edit display name",
+      "reset_display_name": "Reset to default"
     },
     "archive_dialog": {
       "retry": "Retry archive",
@@ -79,7 +81,7 @@
       "cancelled": "Decided not to do."
     },
     "pr_auto_complete_badge": "Set when PRs merge",
-    "built_in_locked": "Built-in statuses drive system behavior, so they can't be edited or archived. You can still reorder them."
+    "built_in_locked": "Only the display name can be edited. Built-in behavior and archiving stay locked; reordering is still available."
   },
   "wakeups": {
     "description": "Platform rules that apply to every issue. Each issue can change them in its Wakeups section.",

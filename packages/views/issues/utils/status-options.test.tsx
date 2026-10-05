@@ -147,6 +147,11 @@ describe("useStatusOptions", () => {
 });
 
 describe("useStatusLabel", () => {
+  it("uses a workspace override ahead of the built-in translation", () => {
+    catalogEntries = BUILT_INS.map((e) => e.key === "in_progress" ? { ...e, display_name: "Working" } : e);
+    const { result } = renderHook(() => useStatusLabel("workspace-1"));
+    expect(result.current("in_progress")).toBe("Working");
+  });
   // The server seeds built-in names in English. Reading them back verbatim
   // would show "In Progress" to every workspace that has picked another
   // language, silently undoing the whole i18n layer for status names.

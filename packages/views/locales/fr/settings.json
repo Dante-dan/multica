@@ -43,7 +43,9 @@
       "cancel": "Annuler",
       "save": "Enregistrer",
       "saving": "Enregistrement…",
-      "save_failed": "L'état n'a pas pu être enregistré."
+      "save_failed": "L'état n'a pas pu être enregistré.",
+      "edit_display_name": "Modifier le nom affiché",
+      "reset_display_name": "Rétablir le nom par défaut"
     },
     "archive_dialog": {
       "retry": "Réessayer l'archivage",
@@ -79,7 +81,7 @@
       "cancelled": "Abandonné."
     },
     "pr_auto_complete_badge": "Définie à la fusion des PR",
-    "built_in_locked": "Les états intégrés pilotent le comportement du système : ils ne peuvent être ni modifiés ni archivés, mais vous pouvez les réordonner."
+    "built_in_locked": "Seul le nom affiché peut être modifié. Le comportement intégré et l'archivage restent verrouillés ; l'ordre peut être changé."
   },
   "wakeups": {
     "description": "Règles de la plateforme appliquées à chaque tâche. Chaque tâche peut les modifier dans sa section Réveils.",
