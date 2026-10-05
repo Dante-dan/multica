@@ -1,0 +1,51 @@
+---
+title: Inbox delta sync
+description: Keep a cached active inbox current without downloading unchanged rows.
+---
+
+`GET /api/inbox` keeps its existing array response and adds an `X-Sync-Cursor`
+header. The cursor and rows come from the same primary database snapshot.
+Store them atomically, scoped by account and workspace.
+
+```http
+GET /api/sync?family=inbox&cursor=<url-encoded-cursor>
+X-Workspace-ID: <workspace-uuid>
+```
+
+```json
+{"upserts": [], "deletes": [], "cursor": "<next-cursor>", "resync": false}
+```
+
+On `resync: false`, replace rows by id from `upserts`, remove ids in `deletes`,
+and commit the next cursor in the same local transaction. Upserts use exactly
+`GET /api/inbox`'s DTO, including its body-preview and issue-projection rules.
+Deletes mean removal from the active family: hard deletion, archiving, or moving
+a notification to another recipient or workspace. Unarchiving returns an upsert.
+An unchanged family returns empty arrays and a fresh cursor.
+
+On `resync: true`, discard the response's delta and replace the family with a
+new full `GET /api/inbox` snapshot. Missing, invalid, incompatible or
+account/workspace-mismatched cursors, retention gaps, and deltas exceeding 1000
+changed ids require this fallback. Missing `resync`, malformed responses, errors
+and missing bootstrap cursor must never be treated as successful catch-up.
+Current changes are compacted to the latest transaction per id, with tombstones
+retained for 30 days; a pruning mark prevents claiming completeness after pruning.
+Catch-up is independent of realtime-event retention and includes transactions
+that were still in progress when an earlier snapshot was read.
+
+Only the **active unfiltered inbox** family is supported by this first slice.
+Other families return HTTP 400; this endpoint does not synchronize inbox unread
+summaries, archived views, issues, agents, runtimes or other collections.
+Apply display filters locally to the complete active inbox. Do not attach this
+cursor to a partial or differently filtered cache.
+
+Membership is checked on every request and recipients cannot read each other's
+changes. On an authorization failure, stop using this workspace's cached data;
+after leaving/rejoining or changing accounts, bootstrap a new scoped cache.
+Cursors are opaque application data; do not decode or edit them. Clients should
+serialize full-list replacement, delta application and websocket writes so an
+older HTTP response cannot overwrite a newer cached revision.
+
+This materialized-state API does not replay events or replace realtime transport.
+It is complementary to the proposed reconnect replay in issue #8226 and only
+implements the inbox portion of issue #9068.

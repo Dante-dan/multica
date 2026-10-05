@@ -784,6 +784,20 @@ type InboxItem struct {
 	Details       []byte             `json:"details"`
 }
 
+type InboxSyncChange struct {
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	RecipientType string             `json:"recipient_type"`
+	RecipientID   pgtype.UUID        `json:"recipient_id"`
+	ItemID        pgtype.UUID        `json:"item_id"`
+	ChangeXid     pgtype.Uint64      `json:"change_xid"`
+	ChangedAt     pgtype.Timestamptz `json:"changed_at"`
+}
+
+type InboxSyncPruneMark struct {
+	Singleton        bool          `json:"singleton"`
+	PrunedThroughXid pgtype.Uint64 `json:"pruned_through_xid"`
+}
+
 type InstanceTelemetryState struct {
 	Singleton         bool               `json:"singleton"`
 	InstanceID        pgtype.UUID        `json:"instance_id"`

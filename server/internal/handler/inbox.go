@@ -164,10 +164,17 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items, err := h.Queries.ListInboxItems(r.Context(), db.ListInboxItemsParams{
-		WorkspaceID:   wsUUID,
-		RecipientType: "member",
-		RecipientID:   parseUUID(userID),
+	var items []db.ListInboxItemsRow
+	var snapshot string
+	err := h.runSearchIndexRead(r.Context(), func(q *db.Queries) error {
+		var err error
+		if snapshot, err = q.GetSearchIndexCurrentSnapshot(r.Context()); err != nil {
+			return err
+		}
+		items, err = q.ListInboxItems(r.Context(), db.ListInboxItemsParams{
+			WorkspaceID: wsUUID, RecipientType: "member", RecipientID: parseUUID(userID),
+		})
+		return err
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list inbox")
@@ -179,6 +186,9 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 		resp[i] = inboxRowToResponse(item)
 	}
 
+	if cursor := encodeInboxSyncCursor(workspaceID, userID, snapshot); cursor != "" {
+		w.Header().Set("X-Sync-Cursor", cursor)
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 

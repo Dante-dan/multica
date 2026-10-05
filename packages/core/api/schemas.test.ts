@@ -43,6 +43,8 @@ import {
   EMPTY_SEARCH_PROJECTS_RESPONSE,
   EMPTY_USER,
   InboxItemListSchema,
+  InboxSyncResponseSchema,
+  EMPTY_INBOX_SYNC_RESPONSE,
   InboxUnreadSummarySchema,
   IssueTriggerPreviewSchema,
   ListIssuesResponseSchema,
@@ -2353,5 +2355,26 @@ describe("AgentActivityBucketListSchema duration", () => {
     expect(parsed[0]?.task_count).toBe(201);
     expect(parsed[0]?.duration_ms).toBeUndefined();
     expect(parsed[0]?.duration_count).toBeUndefined();
+  });
+});
+
+
+describe("InboxSyncResponseSchema", () => {
+  const endpoint = { endpoint: "GET /api/sync?family=inbox" };
+  it("defaults missing resync to rebuilding, never successful catch-up", () => {
+    expect(parseWithFallback({ upserts: [], deletes: [], cursor: "next" },
+      InboxSyncResponseSchema, EMPTY_INBOX_SYNC_RESPONSE, endpoint).resync).toBe(true);
+  });
+  it("rejects incomplete deltas and wrong-typed rows", () => {
+    for (const payload of [null, {}, { resync: false, cursor: "next", upserts: [] },
+      { resync: false, cursor: "", upserts: [], deletes: [] },
+      { resync: false, cursor: "next", upserts: [{ id: "broken" }], deletes: [] }]) {
+      expect(parseWithFallback(payload, InboxSyncResponseSchema, EMPTY_INBOX_SYNC_RESPONSE, endpoint))
+        .toEqual(EMPTY_INBOX_SYNC_RESPONSE);
+    }
+  });
+  it("preserves a complete no-change delta", () => {
+    const delta = { upserts: [], deletes: [], cursor: "next", resync: false };
+    expect(parseWithFallback(delta, InboxSyncResponseSchema, EMPTY_INBOX_SYNC_RESPONSE, endpoint)).toEqual(delta);
   });
 });

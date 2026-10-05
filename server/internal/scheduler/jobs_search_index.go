@@ -68,6 +68,26 @@ func makeSearchIndexChangePruneHandler(queries *db.Queries) Handler {
 				}
 			}
 		}
+		// Inbox catch-up uses the same compact dirty-key / prune-mark contract.
+		// Each family has its own mark so pruning search does not expire inbox.
+		for batch := 0; batch < searchIndexPruneMaxBatches; batch++ {
+			deleted, err := queries.PruneInboxSyncChanges(ctx, db.PruneInboxSyncChangesParams{
+				Cutoff: pgtype.Timestamptz{Time: cutoff, Valid: true}, BatchSize: searchIndexPruneBatchSize,
+			})
+			if err != nil {
+				return HandlerResult{RowsAffected: total}, fmt.Errorf("prune inbox sync changes: %w", err)
+			}
+			total += deleted
+			if deleted < searchIndexPruneBatchSize {
+				break
+			}
+			if in.Heartbeat != nil {
+				if err := in.Heartbeat(ctx); err != nil {
+					return HandlerResult{RowsAffected: total}, err
+				}
+			}
+		}
+
 		return HandlerResult{
 			RowsAffected: total,
 			Result:       map[string]any{"cutoff": cutoff.UTC().Format(time.RFC3339)},

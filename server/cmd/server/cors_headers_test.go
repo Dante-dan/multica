@@ -45,6 +45,7 @@ func TestRouterCORSContract(t *testing.T) {
 		router.ServeHTTP(rec, req)
 
 		for _, want := range []string{
+			"X-Sync-Cursor",
 			handler.HeaderCommentsTruncated,
 			handler.HeaderTimelineTruncated,
 			handler.HeaderActiveRunsTruncated,

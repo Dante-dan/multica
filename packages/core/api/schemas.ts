@@ -2640,6 +2640,19 @@ export const InboxItemListSchema = z.array(
     .loose(),
 );
 
+// Delta clients must fail closed: an incomplete or malformed response never
+// proves catch-up. Callers discard the delta and replace the family on resync.
+export const InboxSyncResponseSchema = z.object({
+  upserts: InboxItemListSchema,
+  deletes: z.array(z.string()),
+  cursor: z.string(),
+  resync: z.boolean().default(true),
+}).refine((response) => response.resync || response.cursor.length > 0);
+
+export const EMPTY_INBOX_SYNC_RESPONSE = {
+  upserts: [], deletes: [], cursor: "", resync: true,
+};
+
 export const ArchivedInboxPageSchema = z.object({
   items: InboxItemListSchema,
   next_cursor: z.string().min(1).nullable(),

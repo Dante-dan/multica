@@ -1257,6 +1257,10 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			name: "delete search index changes",
 			run:  func() error { return qtx.DeleteWorkspaceSearchIndexChanges(ctx, requester.WorkspaceID) },
 		},
+		{
+			name: "delete inbox sync changes",
+			run:  func() error { return qtx.DeleteWorkspaceInboxSyncChanges(ctx, requester.WorkspaceID) },
+		},
 		// Keep source-context object intents after the workspace row is gone.
 		// They are the durable retry ledger for an upload that began before the
 		// workspace lock but completed after this transaction's immediate object
