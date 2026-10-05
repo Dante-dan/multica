@@ -560,6 +560,7 @@ function BuiltInStatusNameDialog({ open, status, onOpenChange }: {
 }) {
   const { t } = useT("settings");
   const update = useUpdateIssueStatus();
+  const labelOf = useStatusLabel(useWorkspaceId());
   const [name, setName] = useState(status.display_name ?? "");
   useEffect(() => { if (open) setName(status.display_name ?? ""); }, [open, status]);
 
@@ -577,7 +578,7 @@ function BuiltInStatusNameDialog({ open, status, onOpenChange }: {
         <DialogHeader><DialogTitle>{t(($) => $.issue_statuses.editor.edit_display_name)}</DialogTitle></DialogHeader>
         <div className="space-y-2">
           <FieldLabel htmlFor="status-display-name">{t(($) => $.issue_statuses.editor.name)}</FieldLabel>
-          <Input id="status-display-name" autoComplete="off" data-1p-ignore autoFocus maxLength={64} value={name} placeholder={status.name} onChange={(event) => setName(event.target.value)} />
+          <Input id="status-display-name" autoComplete="off" data-1p-ignore autoFocus maxLength={64} value={name} placeholder={labelOf(status.key)} onChange={(event) => setName(event.target.value)} />
           <p className="text-caption text-muted-foreground">{t(($) => $.issue_statuses.editor.key_hint, { key: status.key })}</p>
         </div>
         <DialogFooter>
