@@ -18,12 +18,18 @@ CREATE TABLE IF NOT EXISTS inbox_sync_prune_mark (
 );
 CREATE OR REPLACE FUNCTION record_inbox_sync_change()
 RETURNS TRIGGER LANGUAGE plpgsql AS $function$
+DECLARE
+    record_old BOOLEAN := false;
 BEGIN
     -- Record both scopes when an item changes workspace or recipient: the old
     -- family must remove it, not silently retain it forever.
-    IF TG_OP = 'DELETE' OR (TG_OP = 'UPDATE' AND
-       (OLD.workspace_id, OLD.recipient_type, OLD.recipient_id) IS DISTINCT FROM
-       (NEW.workspace_id, NEW.recipient_type, NEW.recipient_id)) THEN
+    IF TG_OP = 'DELETE' THEN
+        record_old := true;
+    ELSIF TG_OP = 'UPDATE' THEN
+        record_old := (OLD.workspace_id, OLD.recipient_type, OLD.recipient_id) IS DISTINCT FROM
+                      (NEW.workspace_id, NEW.recipient_type, NEW.recipient_id);
+    END IF;
+    IF record_old THEN
         INSERT INTO inbox_sync_change
         VALUES (OLD.workspace_id, OLD.recipient_type, OLD.recipient_id, OLD.id, pg_current_xact_id(), now())
         ON CONFLICT (workspace_id, recipient_type, recipient_id, item_id) DO UPDATE
