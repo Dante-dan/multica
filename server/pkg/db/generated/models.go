@@ -953,6 +953,7 @@ type IssueStatus struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 	Icon        string             `json:"icon"`
+	DisplayName string             `json:"display_name"`
 }
 
 type IssueSubscriber struct {

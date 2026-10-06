@@ -19,7 +19,7 @@ WHERE id = $1::uuid
   AND workspace_id = $2::uuid
   AND is_system = FALSE
   AND archived_at IS NULL
-RETURNING id, workspace_id, key, name, description, category, color, is_system, position, archived_at, created_at, updated_at, icon
+RETURNING id, workspace_id, key, name, description, category, color, is_system, position, archived_at, created_at, updated_at, icon, display_name
 `
 
 type ArchiveIssueStatusEntryParams struct {
@@ -50,6 +50,7 @@ func (q *Queries) ArchiveIssueStatusEntry(ctx context.Context, arg ArchiveIssueS
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Icon,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -91,7 +92,7 @@ VALUES (
         0
     )
 )
-RETURNING id, workspace_id, key, name, description, category, color, is_system, position, archived_at, created_at, updated_at, icon
+RETURNING id, workspace_id, key, name, description, category, color, is_system, position, archived_at, created_at, updated_at, icon, display_name
 `
 
 type CreateIssueStatusEntryParams struct {
@@ -131,6 +132,7 @@ func (q *Queries) CreateIssueStatusEntry(ctx context.Context, arg CreateIssueSta
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Icon,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -146,7 +148,7 @@ func (q *Queries) DeleteIssueStatusEntriesForWorkspace(ctx context.Context, work
 }
 
 const getIssueStatusEntryByID = `-- name: GetIssueStatusEntryByID :one
-SELECT id, workspace_id, key, name, description, category, color, is_system, position, archived_at, created_at, updated_at, icon FROM issue_status
+SELECT id, workspace_id, key, name, description, category, color, is_system, position, archived_at, created_at, updated_at, icon, display_name FROM issue_status
 WHERE id = $1::uuid
   AND workspace_id = $2::uuid
 `
@@ -173,12 +175,13 @@ func (q *Queries) GetIssueStatusEntryByID(ctx context.Context, arg GetIssueStatu
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Icon,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getIssueStatusEntryByKey = `-- name: GetIssueStatusEntryByKey :one
-SELECT id, workspace_id, key, name, description, category, color, is_system, position, archived_at, created_at, updated_at, icon FROM issue_status
+SELECT id, workspace_id, key, name, description, category, color, is_system, position, archived_at, created_at, updated_at, icon, display_name FROM issue_status
 WHERE workspace_id = $1::uuid
   AND key = $2::text
 `
@@ -205,12 +208,13 @@ func (q *Queries) GetIssueStatusEntryByKey(ctx context.Context, arg GetIssueStat
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Icon,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const listActiveCustomIssueStatusEntries = `-- name: ListActiveCustomIssueStatusEntries :many
-SELECT id, workspace_id, key, name, description, category, color, is_system, position, archived_at, created_at, updated_at, icon FROM issue_status
+SELECT id, workspace_id, key, name, description, category, color, is_system, position, archived_at, created_at, updated_at, icon, display_name FROM issue_status
 WHERE workspace_id = $1::uuid
   AND category = $2::text
   AND is_system = FALSE
@@ -249,6 +253,7 @@ func (q *Queries) ListActiveCustomIssueStatusEntries(ctx context.Context, arg Li
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Icon,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -261,7 +266,7 @@ func (q *Queries) ListActiveCustomIssueStatusEntries(ctx context.Context, arg Li
 }
 
 const listIssueStatusEntries = `-- name: ListIssueStatusEntries :many
-SELECT id, workspace_id, key, name, description, category, color, is_system, position, archived_at, created_at, updated_at, icon FROM issue_status
+SELECT id, workspace_id, key, name, description, category, color, is_system, position, archived_at, created_at, updated_at, icon, display_name FROM issue_status
 WHERE workspace_id = $1::uuid
   AND ($2::bool OR archived_at IS NULL)
 ORDER BY
@@ -311,6 +316,7 @@ func (q *Queries) ListIssueStatusEntries(ctx context.Context, arg ListIssueStatu
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Icon,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -453,6 +459,47 @@ func (q *Queries) SeedIssueStatusEntries(ctx context.Context, workspaceID pgtype
 	return err
 }
 
+const updateBuiltInIssueStatusDisplayName = `-- name: UpdateBuiltInIssueStatusDisplayName :one
+UPDATE issue_status SET
+    display_name = $1::text,
+    updated_at = now()
+WHERE id = $2::uuid
+  AND workspace_id = $3::uuid
+  AND is_system = TRUE
+  AND archived_at IS NULL
+RETURNING id, workspace_id, key, name, description, category, color, is_system, position, archived_at, created_at, updated_at, icon, display_name
+`
+
+type UpdateBuiltInIssueStatusDisplayNameParams struct {
+	DisplayName string      `json:"display_name"`
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Display aliases never alter canonical names, keys or workflow definitions.
+// Empty restores each client's localized default label.
+func (q *Queries) UpdateBuiltInIssueStatusDisplayName(ctx context.Context, arg UpdateBuiltInIssueStatusDisplayNameParams) (IssueStatus, error) {
+	row := q.db.QueryRow(ctx, updateBuiltInIssueStatusDisplayName, arg.DisplayName, arg.ID, arg.WorkspaceID)
+	var i IssueStatus
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Key,
+		&i.Name,
+		&i.Description,
+		&i.Category,
+		&i.Color,
+		&i.IsSystem,
+		&i.Position,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Icon,
+		&i.DisplayName,
+	)
+	return i, err
+}
+
 const updateIssueStatusEntry = `-- name: UpdateIssueStatusEntry :one
 UPDATE issue_status SET
     name = COALESCE($1, name),
@@ -465,7 +512,7 @@ WHERE id = $6::uuid
   AND workspace_id = $7::uuid
   AND is_system = FALSE
   AND archived_at IS NULL
-RETURNING id, workspace_id, key, name, description, category, color, is_system, position, archived_at, created_at, updated_at, icon
+RETURNING id, workspace_id, key, name, description, category, color, is_system, position, archived_at, created_at, updated_at, icon, display_name
 `
 
 type UpdateIssueStatusEntryParams struct {
@@ -506,6 +553,7 @@ func (q *Queries) UpdateIssueStatusEntry(ctx context.Context, arg UpdateIssueSta
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Icon,
+		&i.DisplayName,
 	)
 	return i, err
 }
