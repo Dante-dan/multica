@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
@@ -220,6 +221,11 @@ func daemonCommonCapabilities() []string {
 // SetToken sets the auth token for authenticated requests.
 func (c *Client) SetToken(token string) {
 	c.token = token
+}
+
+// UsesEnrollmentToken distinguishes host enrollment from user credentials.
+func (c *Client) UsesEnrollmentToken() bool {
+	return strings.HasPrefix(c.token, auth.DaemonEnrollmentTokenPrefix)
 }
 
 // Token returns the current auth token.
@@ -800,6 +806,9 @@ func (c *Client) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, error) {
 	c.workspaceMu.Lock()
 	defer c.workspaceMu.Unlock()
 
+	if c.legacyWorkspaceEndpointEnabled && c.UsesEnrollmentToken() {
+		return nil, fmt.Errorf("enrolled daemon requires scoped workspace discovery")
+	}
 	if c.legacyWorkspaceEndpointEnabled {
 		return c.listLegacyWorkspaces(ctx)
 	}
@@ -823,6 +832,9 @@ func (c *Client) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound && c.UsesEnrollmentToken() {
+		return nil, fmt.Errorf("enrolled daemon requires scoped workspace discovery")
+	}
 	if resp.StatusCode == http.StatusNotFound {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		c.legacyWorkspaceEndpointEnabled = true

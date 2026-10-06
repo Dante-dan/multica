@@ -107,6 +107,12 @@ func (h *Handler) requireDaemonRuntimeAccess(w http.ResponseWriter, r *http.Requ
 	if !h.requireDaemonWorkspaceAccess(w, r, uuidToString(rt.WorkspaceID)) {
 		return db.AgentRuntime{}, false
 	}
+	if middleware.DaemonEnrollmentHashFromContext(r.Context()) != "" {
+		if !rt.DaemonID.Valid || rt.DaemonID.String != middleware.DaemonIDFromContext(r.Context()) {
+			writeError(w, http.StatusNotFound, "runtime not found")
+			return db.AgentRuntime{}, false
+		}
+	}
 	return rt, true
 }
 
@@ -441,7 +447,18 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "workspace not found")
 			return
 		}
-		// ownerID stays zero — COALESCE keeps the existing owner on upsert.
+		if daemonID := middleware.DaemonIDFromContext(r.Context()); daemonID != "" && daemonID != req.DaemonID {
+			writeError(w, http.StatusNotFound, "daemon not found")
+			return
+		}
+		if enrollmentOwner := middleware.DaemonEnrollmentOwnerFromContext(r.Context()); enrollmentOwner != "" {
+			if len(req.LegacyDaemonIDs) != 0 {
+				writeError(w, http.StatusBadRequest, "enrolled hosts cannot merge legacy daemon identities")
+				return
+			}
+			ownerID = parseUUID(enrollmentOwner)
+		}
+		// Internal daemon tokens preserve the existing owner on upsert.
 	} else {
 		member, ok := h.requireWorkspaceMember(w, r, req.WorkspaceID, "workspace not found")
 		if !ok {
@@ -1146,6 +1163,10 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load runtime")
 		return
 	}
+	if middleware.DaemonEnrollmentHashFromContext(r.Context()) != "" && (!rt.DaemonID.Valid || rt.DaemonID.String != middleware.DaemonIDFromContext(r.Context())) {
+		writeError(w, http.StatusNotFound, "runtime not found")
+		return
+	}
 	wsCheckStart := time.Now()
 	wsOK := h.requireDaemonWorkspaceAccess(w, r, uuidToString(rt.WorkspaceID))
 	workspaceCheckMs = time.Since(wsCheckStart).Milliseconds()
@@ -1209,6 +1230,23 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 // path never reads agent_runtime. HTTP heartbeat remains the stateless lookup
 // fallback for a daemon that stops receiving WebSocket acknowledgements.
 func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws.ClientIdentity, runtimeID string, supportsBatchImport bool) (*protocol.DaemonHeartbeatAckPayload, error) {
+	if identity.EnrollmentTokenHash != "" {
+		tx, err := h.TxStarter.Begin(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("daemon enrollment unavailable: %w", err)
+		}
+		defer tx.Rollback(ctx)
+		enrollment, err := h.Queries.WithTx(tx).LockLiveDaemonEnrollment(ctx, identity.EnrollmentTokenHash)
+		if err != nil {
+			if isNotFound(err) {
+				return nil, daemonws.ErrEnrollmentRevoked
+			}
+			return nil, fmt.Errorf("daemon enrollment no longer authorized: %w", err)
+		}
+		if enrollment.DaemonID != identity.DaemonID || !identity.AllowsWorkspace(uuidToString(enrollment.WorkspaceID)) {
+			return nil, fmt.Errorf("daemon enrollment scope changed")
+		}
+	}
 	lease := identity.RuntimeLeases[runtimeID]
 	if lease == nil {
 		return nil, fmt.Errorf("runtime not in connection lease")

@@ -35,12 +35,13 @@ func (h *Handler) DaemonWebSocket(w http.ResponseWriter, r *http.Request) {
 // this fixed scope without re-reading agent_runtime every 15 seconds.
 func (h *Handler) buildDaemonWebSocketIdentity(w http.ResponseWriter, r *http.Request, runtimeIDs []string, userID string) (daemonws.ClientIdentity, bool) {
 	identity := daemonws.ClientIdentity{
-		DaemonID:      middleware.DaemonIDFromContext(r.Context()),
-		UserID:        userID,
-		RuntimeIDs:    runtimeIDs,
-		RuntimeLeases: make(map[string]*daemonws.RuntimeLease, len(runtimeIDs)),
-		ClientVersion: r.Header.Get("X-Client-Version"),
-		Capabilities:  r.Header.Get("X-Client-Capabilities"),
+		EnrollmentTokenHash: middleware.DaemonEnrollmentHashFromContext(r.Context()),
+		DaemonID:            middleware.DaemonIDFromContext(r.Context()),
+		UserID:              userID,
+		RuntimeIDs:          runtimeIDs,
+		RuntimeLeases:       make(map[string]*daemonws.RuntimeLease, len(runtimeIDs)),
+		ClientVersion:       r.Header.Get("X-Client-Version"),
+		Capabilities:        r.Header.Get("X-Client-Capabilities"),
 	}
 	if len(runtimeIDs) == 0 {
 		return identity, true

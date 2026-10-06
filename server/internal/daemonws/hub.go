@@ -3,6 +3,7 @@ package daemonws
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+var ErrEnrollmentRevoked = errors.New("daemon enrollment revoked")
+
 const (
 	writeWait  = 10 * time.Second
 	pongWait   = 60 * time.Second
@@ -21,8 +24,10 @@ const (
 
 // ClientIdentity captures the already-authenticated daemon connection scope.
 type ClientIdentity struct {
-	DaemonID string
-	UserID   string
+	// EnrollmentTokenHash is an internal revocation handle, never a raw secret.
+	EnrollmentTokenHash string
+	DaemonID            string
+	UserID              string
 	// WorkspaceID is the legacy single-workspace scope used by older callers
 	// and daemon-token auth. New code should populate WorkspaceIDs from the
 	// runtime rows authorized for this connection.
@@ -1107,6 +1112,9 @@ func (c *client) handleHeartbeatFrame(raw json.RawMessage) {
 	// closes if the daemon goes away) plus Redis's own server-side limits.
 	ack, err := handler(context.Background(), c.identity, payload.RuntimeID, payload.SupportsBatchImport)
 	if err != nil {
+		if errors.Is(err, ErrEnrollmentRevoked) {
+			_ = c.conn.Close()
+		}
 		slog.Warn("daemon websocket heartbeat handler failed",
 			"error", err,
 			"daemon_id", c.identity.DaemonID,
