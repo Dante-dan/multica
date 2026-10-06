@@ -3710,3 +3710,8 @@ export const RuntimeProfileSchema = z
     runtime_type: profile.runtime_type || profile.protocol_family,
   }));
 export const RuntimeProfileListSchema = z.array(RuntimeProfileSchema);
+
+export const AgentEnvKeysSchema = z.object({
+  agent_id: z.string(),
+  keys: z.array(z.string()).default([]),
+});

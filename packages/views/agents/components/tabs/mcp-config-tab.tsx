@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import type { Agent, AgentRuntime, WorkspaceMcpServer } from "@multica/core/types";
-import { ApiError } from "@multica/core/api";
+import { api, ApiError } from "@multica/core/api";
 import {
   isRuntimeUsableForUser,
   runtimeCapabilitiesOptions,
@@ -89,6 +89,12 @@ export function McpConfigTab({
     canReadRuntime
       ? runtime.id
       : null;
+  const envReferencesSupported = ["claude", "codex", "cursor", "codebuddy"].includes(agent.provider);
+  const environmentKeysQuery = useQuery({
+    queryKey: ["agent-env-keys", agent.workspace_id, agent.id],
+    queryFn: () => api.getAgentEnvKeys(agent.id),
+    enabled: canEdit && envReferencesSupported,
+  });
   const runtimeQuery = useQuery(runtimeCapabilitiesOptions(runtimeId));
   // The workspace MCP servers ASSIGNED to this agent, plus the library to pick
   // from (GH #6062). A library entry does nothing until it is added here, and
@@ -520,6 +526,7 @@ export function McpConfigTab({
           open={editorOpen}
           server={editingServer}
           existingNames={managedNames}
+          environmentKeys={envReferencesSupported && environmentKeysQuery.data ? environmentKeysQuery.data.keys : undefined}
           hideNameWhenEditing
           onOpenChange={setEditorOpen}
           onSave={handleSaveServer}

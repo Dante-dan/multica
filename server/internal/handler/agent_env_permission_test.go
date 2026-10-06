@@ -151,6 +151,7 @@ func TestAgentEnv_UnrelatedMemberForbidden(t *testing.T) {
 		fn   func(http.ResponseWriter, *http.Request)
 		body any
 	}{
+		{"keys", testHandler.GetAgentEnvKeys, nil},
 		{"reveal", testHandler.GetAgentEnv, nil},
 		{"update", testHandler.UpdateAgentEnv, map[string]any{"custom_env": map[string]string{"API_KEY": "stolen"}}},
 	}
@@ -234,6 +235,7 @@ func TestAgentEnv_AgentActorRejectedForOwnedAgent(t *testing.T) {
 		fn   func(http.ResponseWriter, *http.Request)
 		body any
 	}{
+		{"keys", testHandler.GetAgentEnvKeys, nil},
 		{"reveal", testHandler.GetAgentEnv, nil},
 		{"update", testHandler.UpdateAgentEnv, map[string]any{"custom_env": map[string]string{"API_KEY": "exfiltrated"}}},
 	}
@@ -252,5 +254,31 @@ func TestAgentEnv_AgentActorRejectedForOwnedAgent(t *testing.T) {
 				t.Fatalf("expected 403 from an agent actor, got %d: %s", w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestAgentEnvKeysNamesOnly(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	agentID, ownerUserID := agentEnvOwnerFixture(t, "env-keys-agent", "env-keys@multica.test")
+	req := withURLParam(newRequestAs(ownerUserID, http.MethodGet, "/api/agents/"+agentID+"/env/keys", nil), "id", agentID)
+	w := httptest.NewRecorder()
+	testHandler.GetAgentEnvKeys(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var out struct {
+		AgentID string   `json:"agent_id"`
+		Keys    []string `json:"keys"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.AgentID != agentID || len(out.Keys) != 1 || out.Keys[0] != "API_KEY" {
+		t.Fatalf("unexpected names response: %s", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "secret-value") || strings.Contains(w.Body.String(), "custom_env") {
+		t.Fatal("keys endpoint exposed values")
 	}
 }

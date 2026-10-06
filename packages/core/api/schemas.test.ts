@@ -2355,3 +2355,12 @@ describe("AgentActivityBucketListSchema duration", () => {
     expect(parsed[0]?.duration_count).toBeUndefined();
   });
 });
+
+
+describe("AgentEnvKeysSchema", () => {
+  it("keeps only names and strips secret-bearing fields", async () => {
+    const { AgentEnvKeysSchema } = await import("./schemas");
+    expect(AgentEnvKeysSchema.parse({ agent_id: "agent", keys: ["TOKEN"], custom_env: { TOKEN: "secret" } })).toEqual({ agent_id: "agent", keys: ["TOKEN"] });
+    expect(AgentEnvKeysSchema.safeParse({ agent_id: "agent", keys: [42] }).success).toBe(false);
+  });
+});

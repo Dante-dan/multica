@@ -47,6 +47,22 @@ function renderDialog(overrides: Partial<ComponentProps<typeof McpServerDialog>>
 }
 
 describe("McpServerDialog", () => {
+  it("round-trips Agent environment references without copying values", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderDialog({
+      server: managedServer({ config: { command: "uvx", env: { BASE_URL: "https://example.com" }, env_vars: ["TOKEN"] } }),
+      environmentKeys: ["TOKEN", "OTHER"],
+    });
+    expect(screen.getByRole("checkbox", { name: "TOKEN" })).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "OTHER" }));
+    await user.click(screen.getByRole("tab", { name: "JSON" }));
+    const text = screen.getByLabelText("MCP server JSON configuration");
+    expect(JSON.parse((text as HTMLTextAreaElement).value).env_vars).toEqual(["TOKEN", "OTHER"]);
+    await user.click(screen.getByRole("tab", { name: "Visual editor" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave).toHaveBeenCalledWith("fetch", { command: "uvx", env: { BASE_URL: "https://example.com" }, env_vars: ["TOKEN", "OTHER"] });
+  });
+
   it.each(["context7.dev", "legacy server", " padded "])(
     "edits configuration while preserving the historical name %s exactly",
     async (name) => {

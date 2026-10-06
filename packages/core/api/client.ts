@@ -1,7 +1,7 @@
 import type { ZodType } from "zod";
 import type { IssueWakeup, IssueWakeupInput, IssueWakeupSummaryRow, PausedWakeup, SystemWakeup, WakeupRun, WorkspaceSystemWakeup } from "../types/issue-wakeup";
 import type { WorkspaceWakeupPage, WorkspaceWakeupFilters } from "../types/issue-wakeup";
-import { WorkspaceWakeupPageSchema, IssueWakeupSchema, IssueWakeupSummaryRowSchema, PausedWakeupSchema, SystemWakeupSchema, WakeupRunSchema, WorkspaceSystemWakeupSchema } from "./schemas";
+import { AgentEnvKeysSchema, WorkspaceWakeupPageSchema, IssueWakeupSchema, IssueWakeupSummaryRowSchema, PausedWakeupSchema, SystemWakeupSchema, WakeupRunSchema, WorkspaceSystemWakeupSchema } from "./schemas";
 import type { InboxFilters } from "../inbox/filter-store";
 import type { ArchivedInboxPage, ArchivedInboxFacets } from "../types/inbox";
 import { configStore } from "../config";
@@ -1965,6 +1965,13 @@ export class ApiClient {
    * agent-actor sessions get a 403. Every successful call writes an
    * `agent_env_revealed` activity_log row server-side. MUL-2600.
    */
+  async getAgentEnvKeys(id: string): Promise<{ agent_id: string; keys: string[] }> {
+    const raw = await this.fetch(`/api/agents/${id}/env/keys`);
+    return parseWithFallback(raw, AgentEnvKeysSchema, { agent_id: id, keys: [] }, {
+      endpoint: "GET /api/agents/:id/env/keys",
+    });
+  }
+
   async getAgentEnv(id: string): Promise<AgentEnvResponse> {
     return this.fetch(`/api/agents/${id}/env`);
   }

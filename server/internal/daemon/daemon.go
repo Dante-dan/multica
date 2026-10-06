@@ -7924,8 +7924,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if task.Agent != nil {
 		agentMcpConfig = task.Agent.McpConfig
-		effectiveMcpConfig = agentMcpConfig
-		if merged, mergeErr := mergeRuntimeAndAgentMcpConfig(provider, agentMcpConfig); mergeErr != nil {
+		adapted, referenceErr := agent.AdaptMcpEnvReferences(provider, agentMcpConfig, task.Agent.CustomEnv)
+		if referenceErr != nil {
+			return TaskResult{}, referenceErr
+		}
+		effectiveMcpConfig = adapted
+		if merged, mergeErr := mergeRuntimeAndAgentMcpConfig(provider, adapted); mergeErr != nil {
 			taskLog.Warn("mcp_config: runtime merge failed; using agent configuration only",
 				"provider", provider,
 				"error", mergeErr,

@@ -24,6 +24,7 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@multica/ui/components/ui/field";
+import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { Input } from "@multica/ui/components/ui/input";
 import {
   Tabs,
@@ -44,6 +45,7 @@ type McpFormState = {
   command: string;
   args: string[];
   env: KeyValue[];
+  envVars: string[];
   url: string;
   headers: KeyValue[];
   extras: Record<string, unknown>;
@@ -54,6 +56,7 @@ const emptyForm = (): McpFormState => ({
   command: "",
   args: [],
   env: [],
+  envVars: [],
   url: "",
   headers: [],
   extras: {},
@@ -74,6 +77,7 @@ function formFromConfig(config: Record<string, unknown>): McpFormState {
     "args",
     "env",
     "environment",
+    "env_vars",
     "url",
     "headers",
   ]) {
@@ -102,6 +106,7 @@ function formFromConfig(config: Record<string, unknown>): McpFormState {
     command,
     args,
     env: pairsFromRecord(config.env ?? config.environment),
+    envVars: Array.isArray(config.env_vars) ? config.env_vars.filter((key): key is string => typeof key === "string") : [],
     url: typeof config.url === "string" ? config.url : "",
     headers: pairsFromRecord(config.headers),
     extras,
@@ -151,6 +156,7 @@ const FORM_EXPRESSIBLE_TYPES = new Set([
 function formCanExpressConfig(config: Record<string, unknown>): boolean {
   const type =
     typeof config.type === "string" ? config.type.trim().toLowerCase() : "";
+  if (config.env_vars !== undefined && (!Array.isArray(config.env_vars) || config.env_vars.some((key) => typeof key !== "string"))) return false;
   if (type !== "") return FORM_EXPRESSIBLE_TYPES.has(type);
   // No explicit type: the form infers stdio from `command` and http from
   // `url`, and writes that same shape back. With neither there is nothing for
@@ -165,6 +171,7 @@ function configFromForm(form: McpFormState): Record<string, unknown> {
     if (form.args.length > 0) config.args = form.args;
     const env = recordFromPairs(form.env);
     if (env) config.env = env;
+    if (form.envVars.length > 0) config.env_vars = form.envVars;
   } else {
     config.type = "http";
     config.url = form.url.trim();
@@ -209,6 +216,7 @@ export function McpServerDialog({
   open,
   server,
   existingNames,
+  environmentKeys,
   lockName = false,
   replacementMode = false,
   hideNameWhenEditing = false,
@@ -218,6 +226,7 @@ export function McpServerDialog({
   open: boolean;
   server: ManagedMcpServer | null;
   existingNames: Set<string>;
+  environmentKeys?: string[];
   /**
    * Pins the name while editing. Callers whose backend has no atomic rename
    * must set this: letting the field change would turn "save" into "create a
@@ -553,6 +562,21 @@ export function McpServerDialog({
                               setForm((current) => ({ ...current, args }))
                             }
                           />
+                          {environmentKeys !== undefined && (
+                            <fieldset className="space-y-2">
+                              <legend className="text-body font-medium">{t(($) => $.tab_body.mcp_config.dialog_env_vars_label)}</legend>
+                              {[...new Set([...environmentKeys, ...form.envVars])].map((key) => (
+                                <label key={key} className="flex items-center gap-2 text-body">
+                                  <Checkbox checked={form.envVars.includes(key)} onCheckedChange={(checked) => setForm((current) => ({
+                                    ...current,
+                                    envVars: checked ? [...current.envVars, key] : current.envVars.filter((value) => value !== key),
+                                  }))} />
+                                  {key}
+                                  {!environmentKeys.includes(key) && <span className="text-destructive">{t(($) => $.tab_body.mcp_config.dialog_env_vars_missing)}</span>}
+                                </label>
+                              ))}
+                            </fieldset>
+                          )}
                           <KeyValueEditor
                             label={t(($) => $.tab_body.mcp_config.dialog_env_label)}
                             description={t(($) => $.tab_body.mcp_config.dialog_env_hint)}

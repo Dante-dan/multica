@@ -126,6 +126,19 @@ func canManageAgentEnv(agent db.Agent, member db.Member) bool {
 	return ownerID != "" && ownerID == uuidToString(member.UserID)
 }
 
+// GetAgentEnvKeys exposes only configured names, using the same authorization
+// as secret management without invoking the plaintext reveal endpoint.
+func (h *Handler) GetAgentEnvKeys(w http.ResponseWriter, r *http.Request) {
+	agent, _, ok := h.authorizeAgentEnv(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"agent_id": uuidToString(agent.ID),
+		"keys":     sortedKeys(unmarshalCustomEnv(agent)),
+	})
+}
+
 // GetAgentEnv returns the plaintext custom_env map for a single agent
 // after gating through authorizeAgentEnv. Every successful read writes
 // an `agent_env_revealed` row to activity_log (keys only, never
