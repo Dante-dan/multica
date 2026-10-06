@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"regexp"
 	"sort"
@@ -32,6 +33,25 @@ func (b *cursorBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		return nil, fmt.Errorf("cursor-agent executable not found at %q: %w", execName, err)
 	}
 
+	cleanupConfig := func() {}
+	runEnv := b.cfg.Env
+	if baseModel, params, parameterized := parseCursorParameterizedModel(opts.Model); parameterized {
+		models, discovered := discoverCursorModelsForRun(ctx, b.cfg.commandAt(lookedUp), b.cfg.Env)
+		if discovered && cursorCatalogContains(models, opts.Model) {
+			configDir, configErr := prepareCursorRunConfig(b.cfg.Env, baseModel, params)
+			if configErr != nil {
+				return nil, configErr
+			}
+			cleanupConfig = func() { _ = os.RemoveAll(configDir) }
+			runEnv = make(map[string]string, len(b.cfg.Env)+1)
+			for key, value := range b.cfg.Env {
+				runEnv[key] = value
+			}
+			runEnv["CURSOR_CONFIG_DIR"] = configDir
+			opts.Model = baseModel
+		}
+	}
+
 	timeout := opts.Timeout
 	runCtx, cancel := runContext(ctx, timeout)
 
@@ -43,15 +63,17 @@ func (b *cursorBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	cmd.Env = buildEnv(runEnv)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		cleanupConfig()
 		cancel()
 		return nil, fmt.Errorf("cursor stdout pipe: %w", err)
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		cleanupConfig()
 		cancel()
 		return nil, fmt.Errorf("cursor stdin pipe: %w", err)
 	}
@@ -61,6 +83,7 @@ func (b *cursorBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	cmd.Stderr = stderrBuf
 
 	if err := startOwnedProcessTree(cmd, b.cfg.Logger); err != nil {
+		cleanupConfig()
 		closeStdin()
 		cancel()
 		return nil, fmt.Errorf("start cursor-agent: %w", err)
@@ -86,6 +109,7 @@ func (b *cursorBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	}()
 
 	go func() {
+		defer cleanupConfig()
 		defer cancel()
 		defer close(msgCh)
 		defer close(resCh)

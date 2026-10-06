@@ -1304,10 +1304,11 @@ composer-2 - Composer 2
 claude-4.6-sonnet-medium - Sonnet 4.6 1M
 claude-opus-4-7-high - Opus 4.7 1M
 gemini-3.1-pro - Gemini 3.1 Pro
+grok-4.7[reasoning_effort=high,context=500k,fast=false] - Grok 4.7 500K High
 `
 	models := parseCursorModels(input)
-	if len(models) != 6 {
-		t.Fatalf("expected 6 models, got %d: %+v", len(models), models)
+	if len(models) != 7 {
+		t.Fatalf("expected 7 models, got %d: %+v", len(models), models)
 	}
 	ids := map[string]Model{}
 	for _, m := range models {
@@ -1317,6 +1318,9 @@ gemini-3.1-pro - Gemini 3.1 Pro
 		if _, ok := ids[want]; !ok {
 			t.Errorf("missing expected model %q in: %+v", want, models)
 		}
+	}
+	if _, ok := ids["grok-4.7[reasoning_effort=high,context=500k,fast=false]"]; !ok {
+		t.Errorf("missing parameterized Cursor model in: %+v", models)
 	}
 	if def := ids["composer-2-fast"]; !def.Default {
 		t.Errorf("composer-2-fast should be marked default, got %+v", def)

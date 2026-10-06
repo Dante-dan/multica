@@ -2638,7 +2638,8 @@ func parseCursorModels(output string) []Model {
 		}
 		id := strings.TrimSpace(line[:idx])
 		label := strings.TrimSpace(line[idx+3:])
-		if !isOpenclawIdentifier(id) {
+		_, _, parameterized := parseCursorParameterizedModel(id)
+		if !isOpenclawIdentifier(id) && !parameterized {
 			// Reuse the identifier guard — cursor IDs are in the
 			// same character set (alnum + `-./_`), so anything
 			// that fails it is either malformed or a header line.
