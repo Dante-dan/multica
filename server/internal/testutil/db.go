@@ -168,7 +168,7 @@ func (f *Fixture) Member(t TB, workspaceID, userID, role string, over ...Cols) s
 
 // Issue inserts an issue owned by the fixture's workspace and user.
 //
-// number is derived from the workspace's existing issues rather than fixed, so
+// number is derived from the workspace's live and deleted identities rather than fixed, so
 // two issues built by the same test do not collide on the workspace's issue
 // numbering.
 func (f *Fixture) Issue(t TB, title string, over ...Cols) string {
@@ -185,8 +185,8 @@ func (f *Fixture) Issue(t TB, title string, over ...Cols) string {
 	if _, ok := cols["number"]; !ok {
 		workspaceID, _ := cols["workspace_id"].(string)
 		cols["number"] = Raw(fmt.Sprintf(
-			"(SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = %s)",
-			quoteLiteral(workspaceID)))
+			"(SELECT COALESCE(MAX(number), 0) + 1 FROM (SELECT number FROM issue WHERE workspace_id = %s UNION ALL SELECT number FROM issue_tombstone WHERE workspace_id = %s) AS identities)",
+			quoteLiteral(workspaceID), quoteLiteral(workspaceID)))
 	}
 	return f.Insert(t, "issue", cols)
 }
@@ -304,6 +304,9 @@ func (f *Fixture) deleteOnCleanup(t TB, table, id string) {
 	t.Cleanup(func() {
 		_, _ = f.Pool.Exec(context.Background(),
 			fmt.Sprintf("DELETE FROM %s WHERE id = $1", quoteIdent(table)), id)
+		if table == "issue" {
+			_, _ = f.Pool.Exec(context.Background(), "DELETE FROM issue_tombstone WHERE id = $1", id)
+		}
 	})
 }
 
