@@ -1329,8 +1329,9 @@ type replayResult struct {
 // itself, so the whole snapshot applies and cannot conflict. For a continued
 // branch it is the snapshot that branch recorded, which is what makes this a
 // replay of the user's LAST-TURN-TO-NOW edits rather than of their whole tree.
-// If the recorded checkout was clean, replay from the new snapshot's HEAD
-// instead: a committed advance is not an uncommitted edit to the task branch.
+// If the local HEAD changed, first transplant the previous uncommitted edits
+// onto the new HEAD. Comparing snapshots on that shared baseline excludes
+// committed updates without re-proposing edits the branch already carries.
 //
 // Replaying the whole tree onto a continued branch is the tempting version and
 // it is wrong: that merge takes the user's HEAD as its base, so it re-proposes
@@ -1348,21 +1349,10 @@ type replayResult struct {
 func replayUserState(worktreePath string, plan taskBranchPlan, snapshot string, logger *slog.Logger) (replayResult, error) {
 	carried := plan.base
 	if plan.continues {
-		carried = plan.priorState
-		// A record's first parent is the snapshot; that snapshot's parent is
-		// the local HEAD it captured. If the checkout was clean, there are no
-		// old uncommitted edits to subtract. Use the new snapshot's HEAD so a
-		// pull/commit in the local directory is not replayed as user edits.
-		// Pending-conflict records may instead parent another record (with
-		// two parents); keep their existing incremental replay semantics.
-		parents, err := runGitTrimmed(worktreePath, "rev-list", "--parents", "-n", "1", carried+"^1")
+		var err error
+		carried, err = normalizeReplayBaseline(worktreePath, plan.priorState, snapshot)
 		if err != nil {
-			return replayResult{}, fmt.Errorf("execenv: could not read the previous local snapshot: %w", err)
-		}
-		if fields := strings.Fields(parents); len(fields) == 2 {
-			if _, err := runGit(worktreePath, "diff", "--quiet", carried, fields[1]); err == nil {
-				carried = snapshot + "^1"
-			}
+			return replayResult{}, err
 		}
 	}
 	if carried == "" {
@@ -1419,6 +1409,64 @@ func replayUserState(worktreePath string, plan taskBranchPlan, snapshot string, 
 			"path", worktreePath, "branch", plan.name, "files", conflicts)
 	}
 	return replayResult{conflicts: conflicts}, nil
+}
+
+// normalizeReplayBaseline puts the previously carried WIP on the current local
+// HEAD before calculating its incremental change. Only Git objects are written;
+// neither the user's checkout/index nor the task branch or its record is moved.
+func normalizeReplayBaseline(worktreePath, priorState, snapshot string) (string, error) {
+	// A record has two parents; its first is a snapshot or, after a conflict
+	// resolved without a commit, another record. Follow only that parent until
+	// the first one-parent commit: the actual snapshot, parented at local HEAD.
+	// Limit the result to that snapshot, not the repository's entire history.
+	previous, err := runGitTrimmed(worktreePath, "rev-list", "--first-parent", "--parents",
+		"--min-parents=1", "--max-parents=1", "--max-count=1", priorState)
+	if err != nil {
+		return "", fmt.Errorf("execenv: could not read the previous local snapshot: %w", err)
+	}
+	fields := strings.Fields(previous)
+	if len(fields) != 2 {
+		return "", errors.New("execenv: the previous local snapshot has no captured HEAD")
+	}
+	previousSnapshot, previousHead := fields[0], fields[1]
+	currentHead, err := runGitTrimmed(worktreePath, "rev-parse", "--verify", snapshot+"^1")
+	if err != nil {
+		return "", fmt.Errorf("execenv: could not read the current local snapshot's HEAD: %w", err)
+	}
+	if previousHead == currentHead {
+		return priorState, nil
+	}
+	// With no previous WIP, transplanting it is the identity operation. This
+	// also avoids requiring merge-tree when a clean local directory advances.
+	if _, err := runGit(worktreePath, "diff", "--quiet", previousHead, previousSnapshot); err == nil {
+		return currentHead, nil
+	}
+
+	// Use the captured HEAD as an explicit base. A record's second parent is
+	// the agent checkpoint, which may already contain newer mainline commits;
+	// using Git's inferred merge base could then subtract the wrong changes.
+	tree, err := runGitTrimmed(worktreePath, "merge-tree", "--write-tree",
+		"--merge-base="+previousHead, currentHead, previousSnapshot)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return "", fmt.Errorf("execenv: previous uncommitted edits conflict with the local HEAD change from %s to %s; "+
+				"the task branch and its previous snapshot are preserved — reconcile the baseline explicitly or start a new conversation: %w",
+				previousHead, currentHead, err)
+		}
+		return "", fmt.Errorf("execenv: could not normalize previous uncommitted edits onto the current local HEAD "+
+			"(this operation requires Git 2.40 or later); the task branch and its previous snapshot are preserved: %w", err)
+	}
+	// The replay commit needs a commit parent, not just a tree. This object is
+	// only a comparison baseline: its committed HEAD changes never enter the
+	// task branch, which cherry-picks only baseline-to-current-snapshot edits.
+	args := append(commitIdentityArgs(worktreePath), "commit-tree", tree, "-p", currentHead,
+		"-m", "multica: previous local edits on the current HEAD")
+	baseline, err := runGitTrimmed(worktreePath, args...)
+	if err != nil {
+		return "", fmt.Errorf("execenv: could not describe the normalized local snapshot: %w", err)
+	}
+	return baseline, nil
 }
 
 // quotedPaths renders repository paths for a human-facing message. Quoted

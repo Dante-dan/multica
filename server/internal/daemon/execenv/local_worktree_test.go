@@ -903,6 +903,201 @@ func TestPrepareLocalWorktreeDoesNotReplayCleanHEADAdvance(t *testing.T) {
 	}
 }
 
+func TestPrepareLocalWorktreeExcludesHEADAdvanceWithExistingUserEdits(t *testing.T) {
+	for _, kind := range []string{"untracked", "tracked", "deleted"} {
+		for _, newEdits := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/new_edits_%t", kind, newEdits), func(t *testing.T) {
+				repo := newTestRepo(t)
+				switch kind {
+				case "untracked":
+					writeFile(t, filepath.Join(repo, "draft.txt"), "user draft\n")
+				case "tracked":
+					writeFile(t, filepath.Join(repo, "tracked.txt"), "user WIP\n")
+				case "deleted":
+					if err := os.Remove(filepath.Join(repo, "tracked.txt")); err != nil {
+						t.Fatal(err)
+					}
+				}
+				writeFile(t, filepath.Join(repo, "notes.txt"), "old user notes\n")
+				first := prepareTurn(t, repo, "MUL-7488", turnOneTask)
+				writeFile(t, filepath.Join(first.WorkDir, "task.txt"), "agent work\n")
+				if kind == "untracked" {
+					writeFile(t, filepath.Join(first.WorkDir, "draft.txt"), "draft improved by the agent\n")
+				} else if kind == "tracked" {
+					writeFile(t, filepath.Join(first.WorkDir, "tracked.txt"), "WIP improved by the agent\n")
+				}
+				finalizeOK(t, first)
+				firstTip := gitRun(t, repo, "rev-parse", first.Branch)
+
+				// Advancing HEAD commits only upstream work, leaving all WIP alone.
+				writeFile(t, filepath.Join(repo, "upstream.txt"), "committed upstream work\n")
+				gitRun(t, repo, "add", "upstream.txt")
+				gitRun(t, repo, "commit", "-m", "advance local HEAD")
+				if newEdits {
+					writeFile(t, filepath.Join(repo, "keep.txt"), "new tracked user edit\n")
+					writeFile(t, filepath.Join(repo, "scratch.txt"), "new untracked user edit\n")
+					if err := os.Remove(filepath.Join(repo, "notes.txt")); err != nil {
+						t.Fatal(err)
+					}
+				}
+				sourceStatus := gitRun(t, repo, "status", "--porcelain")
+				sourceIndex := gitRun(t, repo, "ls-files", "--stage")
+				second := prepareTurn(t, repo, "MUL-7488", turnTwoTask)
+				if !second.Continued || second.Branch != first.Branch || len(second.ReplayConflicts) != 0 {
+					t.Fatalf("unexpected continuation: %s, continued=%v, conflicts=%v", second.Branch, second.Continued, second.ReplayConflicts)
+				}
+				if _, err := os.Stat(filepath.Join(second.WorkDir, "upstream.txt")); !os.IsNotExist(err) {
+					t.Fatalf("committed HEAD advance was replayed: %v", err)
+				}
+				if kind == "untracked" {
+					if got := readFile(t, filepath.Join(second.WorkDir, "draft.txt")); got != "draft improved by the agent\n" {
+						t.Fatalf("agent's draft was overwritten: %q", got)
+					}
+				} else if kind == "tracked" {
+					if got := readFile(t, filepath.Join(second.WorkDir, "tracked.txt")); got != "WIP improved by the agent\n" {
+						t.Fatalf("agent's tracked edit was overwritten: %q", got)
+					}
+				} else if _, err := os.Stat(filepath.Join(second.WorkDir, "tracked.txt")); !os.IsNotExist(err) {
+					t.Fatalf("user's deletion was lost: %v", err)
+				}
+				if newEdits {
+					for name, want := range map[string]string{"keep.txt": "new tracked user edit\n", "scratch.txt": "new untracked user edit\n"} {
+						if got := readFile(t, filepath.Join(second.WorkDir, name)); got != want {
+							t.Fatalf("new user edit missing in %s: %q", name, got)
+						}
+					}
+					if _, err := os.Stat(filepath.Join(second.WorkDir, "notes.txt")); !os.IsNotExist(err) {
+						t.Fatalf("new untracked deletion was lost: %v", err)
+					}
+				} else if second.BaseCommit != firstTip {
+					t.Fatalf("unchanged WIP authored a replay commit: %s != %s", second.BaseCommit, firstTip)
+				}
+				if got := gitRun(t, repo, "status", "--porcelain"); got != sourceStatus {
+					t.Fatalf("source status changed: %q != %q", got, sourceStatus)
+				}
+				if got := gitRun(t, repo, "ls-files", "--stage"); got != sourceIndex {
+					t.Fatal("source index changed during prepare")
+				}
+				finalizeOK(t, second)
+				secondTip := gitRun(t, repo, "rev-parse", second.Branch)
+				third := prepareTurn(t, repo, "MUL-7488", turnThreeTask)
+				if third.BaseCommit != secondTip || len(third.ReplayConflicts) != 0 {
+					t.Fatalf("unchanged third turn replayed state again: %s, conflicts=%v", third.BaseCommit, third.ReplayConflicts)
+				}
+				finalizeOK(t, third)
+			})
+		}
+	}
+}
+
+func TestPrepareLocalWorktreeNormalizesEditsAcrossChangesInTheSameFile(t *testing.T) {
+	repo := newTestRepo(t)
+	base := "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n"
+	writeFile(t, filepath.Join(repo, "tracked.txt"), base)
+	gitRun(t, repo, "add", "tracked.txt")
+	gitRun(t, repo, "commit", "-m", "multi-line base")
+	writeFile(t, filepath.Join(repo, "tracked.txt"), strings.Replace(base, "one", "user one", 1))
+	first := prepareTurn(t, repo, "MUL-7488", turnOneTask)
+	writeFile(t, filepath.Join(first.WorkDir, "tracked.txt"), strings.Replace(base, "one", "agent one", 1))
+	finalizeOK(t, first)
+	firstTip := gitRun(t, repo, "rev-parse", first.Branch)
+
+	// Pulling a change to another line and restoring the same user WIP is not
+	// a new uncommitted edit; neither line should be replayed into the task.
+	upstream := strings.Replace(base, "eight", "upstream eight", 1)
+	writeFile(t, filepath.Join(repo, "tracked.txt"), upstream)
+	gitRun(t, repo, "add", "tracked.txt")
+	gitRun(t, repo, "commit", "-m", "upstream edit to another line")
+	writeFile(t, filepath.Join(repo, "tracked.txt"), strings.Replace(upstream, "one", "user one", 1))
+	second := prepareTurn(t, repo, "MUL-7488", turnTwoTask)
+	if second.BaseCommit != firstTip || len(second.ReplayConflicts) != 0 {
+		t.Fatalf("unchanged WIP caused replay: %s, conflicts=%v", second.BaseCommit, second.ReplayConflicts)
+	}
+	if got := readFile(t, filepath.Join(second.WorkDir, "tracked.txt")); got != strings.Replace(base, "one", "agent one", 1) {
+		t.Fatalf("committed source edit entered the task or agent edit was lost: %q", got)
+	}
+	finalizeOK(t, second)
+}
+
+func TestPrepareLocalWorktreeExcludesHEADAdvanceAfterUncommittedConflictResolution(t *testing.T) {
+	repo := newTestRepo(t)
+	writeFile(t, filepath.Join(repo, "tracked.txt"), "user A\n")
+	first := prepareTurn(t, repo, "MUL-7488", turnOneTask)
+	writeFile(t, filepath.Join(first.WorkDir, "tracked.txt"), "agent B\n")
+	finalizeOK(t, first)
+	writeFile(t, filepath.Join(repo, "tracked.txt"), "user C\n")
+	for _, taskID := range []string{turnTwoTask, turnThreeTask} {
+		pending := prepareTurn(t, repo, "MUL-7488", taskID)
+		if len(pending.ReplayConflicts) != 1 {
+			t.Fatalf("expected a genuine user conflict, got %v", pending.ReplayConflicts)
+		}
+		gitRun(t, pending.Path, "reset", "--hard", pending.BaseCommit)
+		finalizeOK(t, pending)
+	}
+	record := gitRun(t, repo, "rev-parse", userStateRef(first.Branch))
+	if parents := strings.Fields(gitRun(t, repo, "rev-list", "--parents", "-n", "1", record+"^1")); len(parents) != 3 {
+		t.Fatalf("expected a nested two-parent record, got %v", parents)
+	}
+	writeFile(t, filepath.Join(repo, "upstream.txt"), "committed upstream work\n")
+	gitRun(t, repo, "add", "upstream.txt")
+	gitRun(t, repo, "commit", "-m", "advance local HEAD")
+	resumed := prepareTurn(t, repo, "MUL-7488", "11112222-3333-4444-5555-dddddddddddd")
+	if len(resumed.ReplayConflicts) != 1 || resumed.ReplayConflicts[0] != "tracked.txt" {
+		t.Fatalf("pending user conflict was lost: %v", resumed.ReplayConflicts)
+	}
+	if _, err := os.Stat(filepath.Join(resumed.WorkDir, "upstream.txt")); !os.IsNotExist(err) {
+		t.Fatalf("HEAD advance entered the task through a nested record: %v", err)
+	}
+	writeFile(t, filepath.Join(resumed.WorkDir, "tracked.txt"), "agent B and user C\n")
+	gitRun(t, resumed.Path, "add", "tracked.txt")
+	finalizeOK(t, resumed)
+	resolvedTip := gitRun(t, repo, "rev-parse", resumed.Branch)
+	next := prepareTurn(t, repo, "MUL-7488", "11112222-3333-4444-5555-eeeeeeeeeeee")
+	if next.BaseCommit != resolvedTip || len(next.ReplayConflicts) != 0 {
+		t.Fatalf("resolved user edit was replayed: %s, conflicts=%v", next.BaseCommit, next.ReplayConflicts)
+	}
+	finalizeOK(t, next)
+}
+
+func TestPrepareLocalWorktreePreservesStateWhenHEADNormalizationConflicts(t *testing.T) {
+	repo := newTestRepo(t)
+	writeFile(t, filepath.Join(repo, "tracked.txt"), "previous user WIP\n")
+	first := prepareTurn(t, repo, "MUL-7488", turnOneTask)
+	writeFile(t, filepath.Join(first.WorkDir, "task.txt"), "agent work\n")
+	finalizeOK(t, first)
+	record := gitRun(t, repo, "rev-parse", userStateRef(first.Branch))
+	tip := gitRun(t, repo, "rev-parse", first.Branch)
+	writeFile(t, filepath.Join(repo, "tracked.txt"), "conflicting upstream commit\n")
+	gitRun(t, repo, "add", "tracked.txt")
+	gitRun(t, repo, "commit", "-m", "conflicting HEAD advance")
+	sourceIndex := gitRun(t, repo, "ls-files", "--stage")
+	_, err := prepareTurnAs(t, repo, "MUL-7488", turnTwoTask, testBranchOwner)
+	if err == nil {
+		t.Fatal("prepare accepted an ambiguous normalization of old WIP onto the new HEAD")
+	}
+	if !strings.Contains(err.Error(), "previous uncommitted edits") {
+		t.Fatalf("error does not explain the baseline conflict: %v", err)
+	}
+	if got := gitRun(t, repo, "rev-parse", userStateRef(first.Branch)); got != record {
+		t.Fatal("failed normalization advanced the recorded state")
+	}
+	if got := gitRun(t, repo, "rev-parse", first.Branch); got != tip {
+		t.Fatal("failed normalization changed the task branch")
+	}
+	if got := gitRun(t, repo, "status", "--porcelain"); got != "" {
+		t.Fatalf("failed normalization dirtied the user's checkout: %q", got)
+	}
+	if got := gitRun(t, repo, "ls-files", "--stage"); got != sourceIndex {
+		t.Fatal("failed normalization changed the user's index")
+	}
+	if got := readFile(t, filepath.Join(repo, "tracked.txt")); got != "conflicting upstream commit\n" {
+		t.Fatalf("failed normalization changed source content: %q", got)
+	}
+	if worktrees := gitRun(t, repo, "worktree", "list", "--porcelain"); strings.Count(worktrees, "worktree ") != 1 {
+		t.Fatalf("failed prepare left its worktree registered: %s", worktrees)
+	}
+}
+
 // The user's uncommitted work reaches the branch once, as turn one's baseline,
 // and every later turn replays only what they changed since. Replaying their
 // whole tree again would ask git to merge their copy of a file against the
