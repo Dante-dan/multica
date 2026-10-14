@@ -1059,43 +1059,109 @@ func TestPrepareLocalWorktreeExcludesHEADAdvanceAfterUncommittedConflictResoluti
 	finalizeOK(t, next)
 }
 
-func TestPrepareLocalWorktreePreservesStateWhenHEADNormalizationConflicts(t *testing.T) {
+func TestPrepareLocalWorktreeContinuesAfterUserCommitsConflictingDraft(t *testing.T) {
+	for _, kind := range []string{"untracked", "tracked"} {
+		for _, newEdits := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/new_edits_%t", kind, newEdits), func(t *testing.T) {
+				repo := newTestRepo(t)
+				name := "draft.txt"
+				if kind == "tracked" {
+					name = "tracked.txt"
+				}
+				writeFile(t, filepath.Join(repo, name), "previous user draft\n")
+				first := prepareTurn(t, repo, "MUL-7488", turnOneTask)
+				writeFile(t, filepath.Join(first.WorkDir, name), "draft improved by the agent\n")
+				writeFile(t, filepath.Join(first.WorkDir, "task.txt"), "agent work\n")
+				finalizeOK(t, first)
+				record := gitRun(t, repo, "rev-parse", userStateRef(first.Branch))
+				tip := gitRun(t, repo, "rev-parse", first.Branch)
+
+				// The finished, committed draft conflicts with the old snapshot.
+				// Its committed changes must not enter the task or block resumes.
+				writeFile(t, filepath.Join(repo, name), "finished draft committed by the user\n")
+				gitRun(t, repo, "add", name)
+				gitRun(t, repo, "commit", "-m", "finish and commit the draft")
+				if newEdits {
+					writeFile(t, filepath.Join(repo, "scratch.txt"), "current uncommitted user edit\n")
+				}
+				sourceStatus := gitRun(t, repo, "status", "--porcelain")
+				sourceIndex := gitRun(t, repo, "ls-files", "--stage")
+				for _, taskID := range []string{turnTwoTask, turnThreeTask} {
+					resumed, err := prepareTurnAs(t, repo, "MUL-7488", taskID, testBranchOwner)
+					if err != nil {
+						t.Errorf("resume %s failed after the draft was committed: %v", taskID, err)
+						continue
+					}
+					if !resumed.Continued || resumed.Branch != first.Branch || len(resumed.ReplayConflicts) != 0 {
+						t.Fatalf("unexpected continuation: %s, continued=%v, conflicts=%v", resumed.Branch, resumed.Continued, resumed.ReplayConflicts)
+					}
+					if (!newEdits || taskID == turnThreeTask) && resumed.BaseCommit != tip {
+						t.Fatalf("unchanged user WIP authored a commit on resume %s", taskID)
+					}
+					if got := readFile(t, filepath.Join(resumed.WorkDir, name)); got != "draft improved by the agent\n" {
+						t.Fatalf("committed draft overwrote the agent's work: %q", got)
+					}
+					if got := readFile(t, filepath.Join(resumed.WorkDir, "task.txt")); got != "agent work\n" {
+						t.Fatalf("earlier agent work was lost: %q", got)
+					}
+					if newEdits {
+						if got := readFile(t, filepath.Join(resumed.WorkDir, "scratch.txt")); got != "current uncommitted user edit\n" {
+							t.Fatalf("current user edit was lost: %q", got)
+						}
+					}
+					finalizeOK(t, resumed)
+					tip = gitRun(t, repo, "rev-parse", first.Branch)
+					if got := gitRun(t, repo, "rev-parse", userStateRef(first.Branch)); got == record {
+						t.Fatal("successful resume did not advance the captured user state")
+					}
+					if got := gitRun(t, repo, "status", "--porcelain"); got != sourceStatus {
+						t.Fatalf("resume changed the user's checkout status: %q", got)
+					}
+					if got := gitRun(t, repo, "ls-files", "--stage"); got != sourceIndex {
+						t.Fatal("resume changed the user's index")
+					}
+					if got := readFile(t, filepath.Join(repo, name)); got != "finished draft committed by the user\n" {
+						t.Fatalf("resume changed the user's committed draft: %q", got)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestPrepareLocalWorktreeHandsCurrentEditsToAgentAfterHEADNormalizationConflict(t *testing.T) {
 	repo := newTestRepo(t)
-	writeFile(t, filepath.Join(repo, "tracked.txt"), "previous user WIP\n")
+	writeFile(t, filepath.Join(repo, "tracked.txt"), "previous user draft\n")
 	first := prepareTurn(t, repo, "MUL-7488", turnOneTask)
-	writeFile(t, filepath.Join(first.WorkDir, "task.txt"), "agent work\n")
+	writeFile(t, filepath.Join(first.WorkDir, "tracked.txt"), "draft improved by the agent\n")
 	finalizeOK(t, first)
-	record := gitRun(t, repo, "rev-parse", userStateRef(first.Branch))
-	tip := gitRun(t, repo, "rev-parse", first.Branch)
-	writeFile(t, filepath.Join(repo, "tracked.txt"), "conflicting upstream commit\n")
+	writeFile(t, filepath.Join(repo, "tracked.txt"), "finished draft committed by the user\n")
 	gitRun(t, repo, "add", "tracked.txt")
-	gitRun(t, repo, "commit", "-m", "conflicting HEAD advance")
-	sourceIndex := gitRun(t, repo, "ls-files", "--stage")
-	_, err := prepareTurnAs(t, repo, "MUL-7488", turnTwoTask, testBranchOwner)
-	if err == nil {
-		t.Fatal("prepare accepted an ambiguous normalization of old WIP onto the new HEAD")
+	gitRun(t, repo, "commit", "-m", "finish and commit the draft")
+	writeFile(t, filepath.Join(repo, "tracked.txt"), "current uncommitted user edit\n")
+
+	second := prepareTurn(t, repo, "MUL-7488", turnTwoTask)
+	if len(second.ReplayConflicts) != 1 || second.ReplayConflicts[0] != "tracked.txt" {
+		t.Fatalf("current user edit was not offered as a conflict: %v", second.ReplayConflicts)
 	}
-	if !strings.Contains(err.Error(), "previous uncommitted edits") {
-		t.Fatalf("error does not explain the baseline conflict: %v", err)
+	conflict := readFile(t, filepath.Join(second.WorkDir, "tracked.txt"))
+	for _, want := range []string{"draft improved by the agent", "current uncommitted user edit", "<<<<<<<"} {
+		if !strings.Contains(conflict, want) {
+			t.Fatalf("conflicted file is missing %q: %s", want, conflict)
+		}
 	}
-	if got := gitRun(t, repo, "rev-parse", userStateRef(first.Branch)); got != record {
-		t.Fatal("failed normalization advanced the recorded state")
+	writeFile(t, filepath.Join(second.WorkDir, "tracked.txt"), "agent draft and current user edit\n")
+	gitRun(t, second.Path, "add", "tracked.txt")
+	finalizeOK(t, second)
+	resolvedTip := gitRun(t, repo, "rev-parse", second.Branch)
+	third := prepareTurn(t, repo, "MUL-7488", turnThreeTask)
+	if third.BaseCommit != resolvedTip || len(third.ReplayConflicts) != 0 {
+		t.Fatalf("resolved edit was replayed again: %s, conflicts=%v", third.BaseCommit, third.ReplayConflicts)
 	}
-	if got := gitRun(t, repo, "rev-parse", first.Branch); got != tip {
-		t.Fatal("failed normalization changed the task branch")
+	if got := readFile(t, filepath.Join(third.WorkDir, "tracked.txt")); got != "agent draft and current user edit\n" {
+		t.Fatalf("resolved draft was lost: %q", got)
 	}
-	if got := gitRun(t, repo, "status", "--porcelain"); got != "" {
-		t.Fatalf("failed normalization dirtied the user's checkout: %q", got)
-	}
-	if got := gitRun(t, repo, "ls-files", "--stage"); got != sourceIndex {
-		t.Fatal("failed normalization changed the user's index")
-	}
-	if got := readFile(t, filepath.Join(repo, "tracked.txt")); got != "conflicting upstream commit\n" {
-		t.Fatalf("failed normalization changed source content: %q", got)
-	}
-	if worktrees := gitRun(t, repo, "worktree", "list", "--porcelain"); strings.Count(worktrees, "worktree ") != 1 {
-		t.Fatalf("failed prepare left its worktree registered: %s", worktrees)
-	}
+	finalizeOK(t, third)
 }
 
 // The user's uncommitted work reaches the branch once, as turn one's baseline,

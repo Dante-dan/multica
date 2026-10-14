@@ -1332,6 +1332,8 @@ type replayResult struct {
 // If the local HEAD changed, first transplant the previous uncommitted edits
 // onto the new HEAD. Comparing snapshots on that shared baseline excludes
 // committed updates without re-proposing edits the branch already carries.
+// If that transplant conflicts, replay only the user's current uncommitted
+// edits; a local commit finishing old WIP must not block every later turn.
 //
 // Replaying the whole tree onto a continued branch is the tempting version and
 // it is wrong: that merge takes the user's HEAD as its base, so it re-proposes
@@ -1350,7 +1352,7 @@ func replayUserState(worktreePath string, plan taskBranchPlan, snapshot string, 
 	carried := plan.base
 	if plan.continues {
 		var err error
-		carried, err = normalizeReplayBaseline(worktreePath, plan.priorState, snapshot)
+		carried, err = normalizeReplayBaseline(worktreePath, plan.priorState, snapshot, logger)
 		if err != nil {
 			return replayResult{}, err
 		}
@@ -1414,7 +1416,7 @@ func replayUserState(worktreePath string, plan taskBranchPlan, snapshot string, 
 // normalizeReplayBaseline puts the previously carried WIP on the current local
 // HEAD before calculating its incremental change. Only Git objects are written;
 // neither the user's checkout/index nor the task branch or its record is moved.
-func normalizeReplayBaseline(worktreePath, priorState, snapshot string) (string, error) {
+func normalizeReplayBaseline(worktreePath, priorState, snapshot string, logger *slog.Logger) (string, error) {
 	// A record has two parents; its first is a snapshot or, after a conflict
 	// resolved without a commit, another record. Follow only that parent until
 	// the first one-parent commit: the actual snapshot, parented at local HEAD.
@@ -1450,9 +1452,15 @@ func normalizeReplayBaseline(worktreePath, priorState, snapshot string) (string,
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			return "", fmt.Errorf("execenv: previous uncommitted edits conflict with the local HEAD change from %s to %s; "+
-				"the task branch and its previous snapshot are preserved — reconcile the baseline explicitly or start a new conversation: %w",
-				previousHead, currentHead, err)
+			// The user may have finished and committed the captured draft.
+			// Reusing the old record would fail identically on every resume.
+			// Exclude the committed update and offer only current WIP; any
+			// conflict with the agent's work uses the ordinary replay path.
+			if logger != nil {
+				logger.Warn("execenv: previous local edits conflict with the committed HEAD update; replaying only current uncommitted edits",
+					"path", worktreePath, "previous_head", previousHead, "current_head", currentHead)
+			}
+			return currentHead, nil
 		}
 		return "", fmt.Errorf("execenv: could not normalize previous uncommitted edits onto the current local HEAD "+
 			"(this operation requires Git 2.40 or later); the task branch and its previous snapshot are preserved: %w", err)
