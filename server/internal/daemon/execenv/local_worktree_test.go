@@ -1164,6 +1164,106 @@ func TestPrepareLocalWorktreeHandsCurrentEditsToAgentAfterHEADNormalizationConfl
 	finalizeOK(t, third)
 }
 
+func TestPrepareLocalWorktreePreservesOtherDraftsWhenNormalizationConflicts(t *testing.T) {
+	for _, committedChange := range []string{"finish", "delete", "directory"} {
+		for _, newEdit := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/new_edit_%t", committedChange, newEdit), func(t *testing.T) {
+				repo := newTestRepo(t)
+				// A tracked draft allows both content and modify/delete conflicts.
+				writeFile(t, filepath.Join(repo, "notes.txt"), "original notes\n")
+				gitRun(t, repo, "add", "notes.txt")
+				gitRun(t, repo, "commit", "-m", "initial notes")
+				writeFile(t, filepath.Join(repo, "notes.txt"), "old user notes\n")
+				writeFile(t, filepath.Join(repo, "scratch.txt"), "old user scratch\n")
+				first := prepareTurn(t, repo, "MUL-7488", turnOneTask)
+				writeFile(t, filepath.Join(first.WorkDir, "scratch.txt"), "scratch improved by the agent\n")
+				finalizeOK(t, first)
+				tip := gitRun(t, repo, "rev-parse", first.Branch)
+
+				switch committedChange {
+				case "finish":
+					writeFile(t, filepath.Join(repo, "notes.txt"), "finished committed notes\n")
+				case "delete", "directory":
+					if err := os.Remove(filepath.Join(repo, "notes.txt")); err != nil {
+						t.Fatal(err)
+					}
+					if committedChange == "directory" {
+						writeFile(t, filepath.Join(repo, "notes.txt", "finished.txt"), "finished committed notes\n")
+					}
+				}
+				gitRun(t, repo, "add", "-A", "--", "notes.txt")
+				gitRun(t, repo, "commit", "-m", "commit the notes change")
+				if newEdit {
+					writeFile(t, filepath.Join(repo, "keep.txt"), "new tracked user edit\n")
+				}
+				sourceHead := gitRun(t, repo, "rev-parse", "HEAD")
+				sourceStatus := gitRun(t, repo, "status", "--porcelain")
+				sourceIndex := gitRun(t, repo, "ls-files", "--stage")
+				for _, taskID := range []string{turnTwoTask, turnThreeTask} {
+					resumed := prepareTurn(t, repo, "MUL-7488", taskID)
+					if len(resumed.ReplayConflicts) != 0 {
+						t.Fatalf("an unchanged draft was replayed as a conflict: %v", resumed.ReplayConflicts)
+					}
+					if (!newEdit || taskID == turnThreeTask) && resumed.BaseCommit != tip {
+						t.Fatal("unchanged drafts caused an extra replay commit")
+					}
+					if got := readFile(t, filepath.Join(resumed.WorkDir, "scratch.txt")); got != "scratch improved by the agent\n" {
+						t.Fatalf("unchanged user scratch overwrote the agent's work: %q", got)
+					}
+					if got := readFile(t, filepath.Join(resumed.WorkDir, "notes.txt")); got != "old user notes\n" {
+						t.Fatalf("committed notes change entered the task branch: %q", got)
+					}
+					if newEdit {
+						if got := readFile(t, filepath.Join(resumed.WorkDir, "keep.txt")); got != "new tracked user edit\n" {
+							t.Fatalf("new user edit was lost: %q", got)
+						}
+					}
+					finalizeOK(t, resumed)
+					tip = gitRun(t, repo, "rev-parse", first.Branch)
+					if got := gitRun(t, repo, "rev-parse", "HEAD"); got != sourceHead {
+						t.Fatal("normalization moved the user's HEAD")
+					}
+					if got := gitRun(t, repo, "status", "--porcelain"); got != sourceStatus {
+						t.Fatalf("normalization changed source status: %q", got)
+					}
+					if got := gitRun(t, repo, "ls-files", "--stage"); got != sourceIndex {
+						t.Fatal("normalization changed the user's index")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestPrepareLocalWorktreeNormalizesConflictPathsLiterally(t *testing.T) {
+	repo := newTestRepo(t)
+	// Brackets are valid filenames on every platform but are also Git glob
+	// syntax. Restoring the first path must not reset the second draft's WIP.
+	conflicting := "notes [1].txt"
+	unchanged := "notes 1.txt"
+	writeFile(t, filepath.Join(repo, conflicting), "old user notes\n")
+	writeFile(t, filepath.Join(repo, unchanged), "old user scratch\n")
+	first := prepareTurn(t, repo, "MUL-7488", turnOneTask)
+	writeFile(t, filepath.Join(first.WorkDir, unchanged), "scratch improved by the agent\n")
+	finalizeOK(t, first)
+	tip := gitRun(t, repo, "rev-parse", first.Branch)
+	writeFile(t, filepath.Join(repo, conflicting), "finished committed notes\n")
+	gitRun(t, repo, "add", "--", ":(literal)"+conflicting)
+	gitRun(t, repo, "commit", "-m", "finish notes with a literal name")
+
+	second := prepareTurn(t, repo, "MUL-7488", turnTwoTask)
+	if len(second.ReplayConflicts) != 0 || second.BaseCommit != tip {
+		t.Fatalf("unrelated matching filename was replayed: %v, base=%s", second.ReplayConflicts, second.BaseCommit)
+	}
+	if got := readFile(t, filepath.Join(second.WorkDir, unchanged)); got != "scratch improved by the agent\n" {
+		t.Fatalf("unrelated matching draft was overwritten: %q", got)
+	}
+	if got := readFile(t, filepath.Join(second.WorkDir, conflicting)); got != "old user notes\n" {
+		t.Fatalf("committed notes were replayed: %q", got)
+	}
+	finalizeOK(t, second)
+}
+
 // The user's uncommitted work reaches the branch once, as turn one's baseline,
 // and every later turn replays only what they changed since. Replaying their
 // whole tree again would ask git to merge their copy of a file against the

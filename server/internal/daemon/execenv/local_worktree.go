@@ -1332,8 +1332,8 @@ type replayResult struct {
 // If the local HEAD changed, first transplant the previous uncommitted edits
 // onto the new HEAD. Comparing snapshots on that shared baseline excludes
 // committed updates without re-proposing edits the branch already carries.
-// If that transplant conflicts, replay only the user's current uncommitted
-// edits; a local commit finishing old WIP must not block every later turn.
+// If that transplant conflicts, use current HEAD for the affected paths while
+// retaining the successfully normalized edits in all other paths.
 //
 // Replaying the whole tree onto a continued branch is the tempting version and
 // it is wrong: that merge takes the user's HEAD as its base, so it re-proposes
@@ -1414,8 +1414,9 @@ func replayUserState(worktreePath string, plan taskBranchPlan, snapshot string, 
 }
 
 // normalizeReplayBaseline puts the previously carried WIP on the current local
-// HEAD before calculating its incremental change. Only Git objects are written;
-// neither the user's checkout/index nor the task branch or its record is moved.
+// HEAD before calculating its incremental change. Writes are limited to Git
+// objects and disposable scratch files; neither live checkout/index nor the task
+// branch or its record is moved.
 func normalizeReplayBaseline(worktreePath, priorState, snapshot string, logger *slog.Logger) (string, error) {
 	// A record has two parents; its first is a snapshot or, after a conflict
 	// resolved without a commit, another record. Follow only that parent until
@@ -1447,23 +1448,43 @@ func normalizeReplayBaseline(worktreePath, priorState, snapshot string, logger *
 	// Use the captured HEAD as an explicit base. A record's second parent is
 	// the agent checkpoint, which may already contain newer mainline commits;
 	// using Git's inferred merge base could then subtract the wrong changes.
-	tree, err := runGitTrimmed(worktreePath, "merge-tree", "--write-tree",
+	merged, err := runGitStdout(worktreePath, "merge-tree", "--write-tree", "--name-only", "--messages", "-z",
 		"--merge-base="+previousHead, currentHead, previousSnapshot)
+	tree, _, hasTree := strings.Cut(merged, "\x00")
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			// The user may have finished and committed the captured draft.
-			// Reusing the old record would fail identically on every resume.
-			// Exclude the committed update and offer only current WIP; any
-			// conflict with the agent's work uses the ordinary replay path.
-			if logger != nil {
-				logger.Warn("execenv: previous local edits conflict with the committed HEAD update; replaying only current uncommitted edits",
-					"path", worktreePath, "previous_head", previousHead, "current_head", currentHead)
+			paths, pathsErr := mergeTreeConflictPaths(merged)
+			if pathsErr != nil {
+				return "", fmt.Errorf("execenv: could not read the conflicted local snapshot: %w", pathsErr)
 			}
-			return currentHead, nil
+			// A single conflicting draft must not re-propose every untouched
+			// draft against the agent's edits. Preserve the merged tree and
+			// replace only the conflicting paths with their current HEAD state.
+			if len(paths) == 0 {
+				// Git can report a tree-level conflict without affected paths.
+				// Retain the resumable current-WIP behavior in that case.
+				if logger != nil {
+					logger.Warn("execenv: local snapshot merge reported a conflict without paths; replaying current uncommitted edits",
+						"path", worktreePath, "previous_head", previousHead, "current_head", currentHead)
+				}
+				return currentHead, nil
+			}
+			tree, err = replaceConflictedSnapshotPaths(worktreePath, tree, currentHead, paths)
+			if err != nil {
+				return "", err
+			}
+			if logger != nil {
+				logger.Warn("execenv: previous local edits conflict with the committed HEAD update; replaying current edits only for the affected paths",
+					"path", worktreePath, "previous_head", previousHead, "current_head", currentHead, "files", quotedPaths(paths))
+			}
+		} else {
+			return "", fmt.Errorf("execenv: could not normalize previous uncommitted edits onto the current local HEAD "+
+				"(this operation requires Git 2.40 or later); the task branch and its previous snapshot are preserved: %w", err)
 		}
-		return "", fmt.Errorf("execenv: could not normalize previous uncommitted edits onto the current local HEAD "+
-			"(this operation requires Git 2.40 or later); the task branch and its previous snapshot are preserved: %w", err)
+	}
+	if !hasTree || tree == "" {
+		return "", errors.New("execenv: the normalized local snapshot has no tree")
 	}
 	// The replay commit needs a commit parent, not just a tree. This object is
 	// only a comparison baseline: its committed HEAD changes never enter the
@@ -1475,6 +1496,76 @@ func normalizeReplayBaseline(worktreePath, priorState, snapshot string, logger *
 		return "", fmt.Errorf("execenv: could not describe the normalized local snapshot: %w", err)
 	}
 	return baseline, nil
+}
+
+// mergeTreeConflictPaths reads merge-tree's NUL-delimited file and message
+// sections. Conflict messages also name paths for directory-rename conflicts
+// that have no unmerged file entries. Never parse the human-readable message.
+func mergeTreeConflictPaths(output string) ([]string, error) {
+	fields := strings.Split(output, "\x00")
+	if len(fields) < 3 || fields[0] == "" || fields[len(fields)-1] != "" {
+		return nil, errors.New("invalid merge-tree output")
+	}
+	var paths []string
+	seen := make(map[string]bool)
+	add := func(name string) {
+		if name != "" && !seen[name] {
+			paths = append(paths, name)
+			seen[name] = true
+		}
+	}
+	i := 1
+	for i < len(fields) && fields[i] != "" {
+		add(fields[i])
+		i++
+	}
+	i++ // End of the unmerged-file section.
+	for i < len(fields)-1 {
+		count, err := strconv.Atoi(fields[i])
+		i++
+		if err != nil || count < 0 || count > len(fields)-i-3 {
+			return nil, errors.New("invalid merge-tree conflict message")
+		}
+		if strings.HasPrefix(fields[i+count], "CONFLICT") {
+			for _, name := range fields[i : i+count] {
+				add(name)
+			}
+		}
+		i += count + 2 // Affected paths, conflict type, and message.
+	}
+	return paths, nil
+}
+
+// replaceConflictedSnapshotPaths edits only a private index beside the task
+// worktree. Resetting explicit literal paths handles additions, deletions,
+// renames and file/directory conflicts without touching either live index.
+func replaceConflictedSnapshotPaths(worktreePath, tree, currentHead string, paths []string) (string, error) {
+	if len(paths) == 0 {
+		return "", errors.New("execenv: no conflicted snapshot paths to replace")
+	}
+	dir, err := os.MkdirTemp(filepath.Dir(worktreePath), ".multica-normalize-")
+	if err != nil {
+		return "", fmt.Errorf("execenv: create private normalization index: %w", err)
+	}
+	defer os.RemoveAll(dir)
+	env := []string{"GIT_INDEX_FILE=" + filepath.Join(dir, "index"), "GIT_LITERAL_PATHSPECS=1"}
+	if out, err := runGitEnv(worktreePath, env, "read-tree", tree); err != nil {
+		return "", fmt.Errorf("execenv: seed private normalization index: %s: %w", strings.TrimSpace(out), err)
+	}
+	pathFile := filepath.Join(dir, "paths")
+	if err := os.WriteFile(pathFile, []byte(strings.Join(paths, "\x00")+"\x00"), 0o600); err != nil {
+		return "", fmt.Errorf("execenv: write conflicted snapshot paths: %w", err)
+	}
+	// The nonempty pathspec file selects reset's index-only form. Using a file
+	// avoids command-length limits and preserves whitespace in repository names.
+	if out, err := runGitEnv(worktreePath, env, "reset", currentHead, "--pathspec-from-file="+pathFile, "--pathspec-file-nul"); err != nil {
+		return "", fmt.Errorf("execenv: replace conflicted snapshot paths: %s: %w", strings.TrimSpace(out), err)
+	}
+	normalized, err := runGitTrimmedEnv(worktreePath, env, "write-tree")
+	if err != nil {
+		return "", fmt.Errorf("execenv: write normalized local snapshot: %w", err)
+	}
+	return normalized, nil
 }
 
 // quotedPaths renders repository paths for a human-facing message. Quoted
@@ -1777,7 +1868,8 @@ func runGitTrimmedEnv(dir string, extraEnv []string, args ...string) (string, er
 
 // runGitStdout is runGitTrimmed without the trimming, for output where
 // whitespace is significant — NUL-separated file listings, where a leading or
-// trailing space is part of a filename.
+// trailing space is part of a filename. Retain partial stdout on error for
+// plumbing like merge-tree, which emits a useful tree on a conflict.
 func runGitStdout(dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
@@ -1787,7 +1879,7 @@ func runGitStdout(dir string, args ...string) (string, error) {
 	cmd.WaitDelay = 5 * time.Second
 	out, err := cmd.Output()
 	if err != nil {
-		return "", withGitStderr(err)
+		return string(out), withGitStderr(err)
 	}
 	return string(out), nil
 }
