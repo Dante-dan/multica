@@ -11,7 +11,7 @@ export function useCreatePin() {
   const userId = useAuthStore((s) => s.user?.id ?? "");
   return useMutation({
     mutationFn: (data: { item_type: PinnedItemType; item_id: string }) =>
-      api.createPin(data),
+      api.createPin(data, wsId),
     onSuccess: (newPin) => {
       qc.setQueryData<PinnedItem[]>(pinKeys.list(wsId, userId), (old) =>
         old ? [...old, newPin] : [newPin],
@@ -29,7 +29,7 @@ export function useDeletePin() {
   const userId = useAuthStore((s) => s.user?.id ?? "");
   return useMutation({
     mutationFn: ({ itemType, itemId }: { itemType: PinnedItemType; itemId: string }) =>
-      api.deletePin(itemType, itemId),
+      api.deletePin(itemType, itemId, wsId),
     onMutate: async ({ itemType, itemId }) => {
       await qc.cancelQueries({ queryKey: pinKeys.list(wsId, userId) });
       const prev = qc.getQueryData<PinnedItem[]>(pinKeys.list(wsId, userId));
@@ -54,7 +54,7 @@ export function useReorderPins() {
   return useMutation({
     mutationFn: (reorderedPins: PinnedItem[]) => {
       const items = reorderedPins.map((p, i) => ({ id: p.id, position: i + 1 }));
-      return api.reorderPins({ items });
+      return api.reorderPins({ items }, wsId);
     },
     onMutate: async (reorderedPins) => {
       await qc.cancelQueries({ queryKey: pinKeys.list(wsId, userId) });

@@ -719,6 +719,12 @@ function workspaceHeader(
   return slug ? { "X-Workspace-Slug": slug } : undefined;
 }
 
+// Clear the higher-priority global slug so the query/mutation's UUID wins,
+// including when fetchRaw rebuilds headers for a retry after navigation.
+function pinWorkspaceHeaders(workspaceId?: string): Record<string, string> | undefined {
+  return workspaceId ? { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId } : undefined;
+}
+
 function dingTalkGroupSearch(params: ListDingTalkGroupsParams): string {
   const search = new URLSearchParams();
   if (params.activity) search.set("activity", params.activity);
@@ -4466,26 +4472,28 @@ export class ApiClient {
   }
 
   // Pins
-  async listPins(): Promise<PinnedItem[]> {
+  async listPins(workspaceId?: string): Promise<PinnedItem[]> {
     // include=view is the capability opt-in: the server withholds view pins
     // from clients that don't declare support (old builds treated any
     // non-issue pin as a project pin and auto-deleted it on 404).
-    return this.fetch("/api/pins?include=view");
+    return this.fetch("/api/pins?include=view", { headers: pinWorkspaceHeaders(workspaceId) });
   }
 
-  async createPin(data: CreatePinRequest): Promise<PinnedItem> {
+  async createPin(data: CreatePinRequest, workspaceId?: string): Promise<PinnedItem> {
     return this.fetch("/api/pins", {
+      headers: pinWorkspaceHeaders(workspaceId),
       method: "POST",
       body: JSON.stringify(data),
     });
   }
 
-  async deletePin(itemType: PinnedItemType, itemId: string): Promise<void> {
-    await this.fetch(`/api/pins/${itemType}/${itemId}`, { method: "DELETE" });
+  async deletePin(itemType: PinnedItemType, itemId: string, workspaceId?: string): Promise<void> {
+    await this.fetch(`/api/pins/${itemType}/${itemId}`, { method: "DELETE", headers: pinWorkspaceHeaders(workspaceId) });
   }
 
-  async reorderPins(data: ReorderPinsRequest): Promise<void> {
+  async reorderPins(data: ReorderPinsRequest, workspaceId?: string): Promise<void> {
     await this.fetch("/api/pins/reorder", {
+      headers: pinWorkspaceHeaders(workspaceId),
       method: "PUT",
       body: JSON.stringify(data),
     });

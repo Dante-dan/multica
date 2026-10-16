@@ -72,7 +72,7 @@ import { inboxUnreadSummaryOptions, useInboxUnreadCount, hasOtherWorkspaceUnread
 import { chatSessionsOptions } from "@multica/core/chat/queries";
 import { countUnreadChatMessages } from "@multica/core/chat/unread";
 import { useChatStore } from "@multica/core/chat";
-import { api, ApiError } from "@multica/core/api";
+import { api } from "@multica/core/api";
 import { useConfigStore } from "@multica/core/config";
 import { pinListOptions } from "@multica/core/pins/queries";
 import { useDeletePin, useReorderPins } from "@multica/core/pins/mutations";
@@ -308,19 +308,8 @@ function PinRow({
     enabled: isView,
   });
 
-  const triggeredRef = useRef(false);
-  useEffect(() => {
-    // Views are exempt from 404-auto-unpin: an installed desktop client
-    // talking to an older backend without the view endpoints sees 404 for
-    // every view pin — auto-unpinning would permanently delete them all.
-    // A deleted view's row simply hides instead.
-    if (isView) return;
-    const err = isIssue ? issueQuery.error : projectQuery.error;
-    if (err instanceof ApiError && err.status === 404 && !triggeredRef.current) {
-      triggeredRef.current = true;
-      onUnpin();
-    }
-  }, [isIssue, isView, issueQuery.error, onUnpin, projectQuery.error]);
+  // A 404 can come from a stale workspace request or an older backend.
+  // Hide unresolved rows without turning a read failure into permanent deletion.
 
   const activeViewByContainer = useActiveIssueViewStore((s) => s.active);
   if (isView) {

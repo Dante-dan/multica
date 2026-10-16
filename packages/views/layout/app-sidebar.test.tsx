@@ -218,10 +218,10 @@ describe("PinRow", () => {
     workspaces.current = [];
   });
 
-  it("unpins missing details", async () => {
+  it("preserves pins when detail lookup returns 404", async () => {
     detail.current = { isPending: false, isError: true, data: null, error: new ApiError("missing", 404, "Not Found") };
     render(<AppSidebar />);
-    await waitFor(() => expect(deletePin).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(deletePin).not.toHaveBeenCalled());
   });
 
   it("ignores non-404 errors", async () => {
