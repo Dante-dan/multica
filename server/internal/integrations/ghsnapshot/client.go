@@ -6,8 +6,8 @@
 // The package has three layers:
 //   - Client (this file): GitHub App auth — App JWT → installation access
 //     token (cached per installation, refreshed early) → GraphQL/REST calls.
-//   - snapshot.go: the single GraphQL query, contexts pagination, and
-//     normalization into a flat per-check snapshot.
+//   - snapshot.go and snapshot_rest.go: the GraphQL query, permission fallback,
+//     pagination, and normalization into a flat per-check snapshot.
 //   - refresh.go: the outbound work queue (dedup, single in-flight per PR,
 //     bounded concurrency, Retry-After backoff), the head-SHA-guarded atomic
 //     write, and the trigger surfaces (webhook / page visit / TTL sweep).
@@ -53,6 +53,14 @@ type RateLimitError struct {
 
 func (e *RateLimitError) Error() string {
 	return fmt.Sprintf("github rate limited, retry after %s", e.RetryAfter)
+}
+
+// permissionError identifies a query denied by installation permissions. It
+// permits the snapshot reader to retry through Checks and Statuses APIs.
+type permissionError struct{}
+
+func (*permissionError) Error() string {
+	return "github graphql: resource not accessible by integration"
 }
 
 // Client is an installation-token-authenticated GitHub API client. A nil
@@ -257,6 +265,11 @@ func (c *Client) graphQL(ctx context.Context, installationID int64, query string
 		for _, e := range envelope.Errors {
 			if e.Type == "RATE_LIMITED" {
 				return nil, &RateLimitError{RetryAfter: time.Minute}
+			}
+		}
+		for _, e := range envelope.Errors {
+			if e.Type == "FORBIDDEN" {
+				return nil, &permissionError{}
 			}
 		}
 		// Surface the message but nothing else; GraphQL error messages do not

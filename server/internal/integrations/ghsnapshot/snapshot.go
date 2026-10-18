@@ -134,7 +134,8 @@ type graphqlPRData struct {
 const maxSnapshotContextPages = 100
 
 // FetchPRSnapshot runs prSnapshotQuery, paginating statusCheckRollup.contexts
-// to completion, and returns the normalized snapshot. A nil rollup yields
+// to completion, with a Checks/Statuses fallback for denied commit access.
+// It returns the normalized snapshot. A nil rollup yields
 // HasChecks=false with no contexts.
 func FetchPRSnapshot(ctx context.Context, c *Client, installationID int64, owner, repo string, number int32) (*PRSnapshot, error) {
 	if !c.Enabled() {
@@ -153,6 +154,10 @@ func FetchPRSnapshot(ctx context.Context, c *Client, installationID int64, owner
 		}
 		data, err := c.graphQL(ctx, installationID, prSnapshotQuery, vars)
 		if err != nil {
+			var denied *permissionError
+			if errors.As(err, &denied) {
+				return fetchPRSnapshotREST(ctx, c, installationID, owner, repo, number)
+			}
 			return nil, err
 		}
 		var parsed graphqlPRData

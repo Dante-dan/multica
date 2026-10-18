@@ -134,7 +134,7 @@ Repository permissions：
 | 权限 | 级别 |
 |---|---|
 | Metadata | Read-only |
-| Contents | Read-only；PR 快照查询需要它，一次读取 head commit、可合并状态与 CI 汇总 |
+| Contents | Read-only；已授予 Checks 和 Commit statuses 时可选。缺少 Contents 时，快照通过 Checks 和 Statuses API 读取 |
 | Pull requests | Read-only |
 | Checks | Read-only；用于显示 CI 状态 |
 | Commit statuses | Read-only；用于汇总 legacy status 形式的 CI |
@@ -144,7 +144,7 @@ Repository permissions：
 - **Pull request**；
 - **Check suite**、**Check run** 和 **Status**，用于触发 CI 与可合并性刷新。
 
-如果不需要在 Multica 中显示 CI，可以不授予 Checks 和 Commit statuses 权限，也不订阅对应事件。但 Contents 仍然必须授予——缺少它时整个快照查询会直接失败，PR 卡片连合并状态也会一起消失。
+主快照查询通过 Contents 读取 CI 汇总。该查询被拒绝时，Multica 使用 Checks 和 Commit statuses 分别读取检查和旧式状态，并通过 Pull requests 保留可合并状态。请授予 Contents，或同时授予 Checks 和 Commit statuses。回退路径遇到超过 1,000 个 check suite 或单个接口超过 100 页的情况时会拒绝快照，避免保存不完整结果。
 
 <Callout type="warning">
 这里需要的是 **Webhook secret**，不是 OAuth Client secret。两边填写的 Webhook secret 不一致时，GitHub delivery 会返回 `401 invalid signature`。

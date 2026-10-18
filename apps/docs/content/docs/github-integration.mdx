@@ -134,7 +134,7 @@ Repository permissions:
 | Permission | Level |
 |---|---|
 | Metadata | Read-only |
-| Contents | Read-only; required by the PR snapshot query, which reads the head commit together with mergeability and the CI rollup |
+| Contents | Read-only; optional when Checks and Commit statuses are granted. Without Contents, snapshots use the Checks and Statuses APIs |
 | Pull requests | Read-only |
 | Checks | Read-only; used to show CI status |
 | Commit statuses | Read-only; used to aggregate legacy-status CI |
@@ -144,7 +144,7 @@ Subscribe to these events:
 - **Pull request**;
 - **Check suite**, **Check run**, and **Status**, which trigger CI and mergeability refreshes.
 
-If you don't need CI shown in Multica, you can skip the Checks and Commit statuses permissions and their events. Contents is still required — without it the snapshot query fails outright and the PR card also loses merge state.
+The primary snapshot query uses Contents to read the CI rollup. If that query is denied, Multica reads checks and legacy statuses separately using Checks and Commit statuses, and preserves mergeability through Pull requests. Grant either Contents, or both Checks and Commit statuses. The fallback refuses snapshots with more than 1,000 check suites or 100 pages per endpoint instead of storing incomplete results.
 
 <Callout type="warning">
 This is the **Webhook secret**, not the OAuth Client secret. If the two sides have different webhook secrets, GitHub deliveries return `401 invalid signature`.
