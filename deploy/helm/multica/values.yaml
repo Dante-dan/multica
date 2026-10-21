@@ -148,6 +148,9 @@ backend:
     # every caller. Bootstrap the workspace with this false, then flip to
     # true so users can only join via invitation.
     disableWorkspaceCreation: false
+    # Comma-separated exact email/domain allowlists; empty means unrestricted.
+    workspaceCreationAllowedEmails: ""
+    workspaceCreationAllowedEmailDomains: ""
     # Set to "1" or "true" to disable first-party anonymous self-host
     # telemetry collection and delivery.
     doNotTrack: ""

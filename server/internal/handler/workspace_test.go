@@ -1513,3 +1513,29 @@ func TestUpdateWorkspace_RejectsInvalidIssuePrefix(t *testing.T) {
 		t.Fatalf("issue_prefix changed on a rejected update: %q → %q", before, after)
 	}
 }
+
+func TestCreateWorkspace_AccountAllowlist(t *testing.T) {
+	prev := testHandler.cfg
+	t.Cleanup(func() { testHandler.cfg = prev })
+	for _, tt := range []struct {
+		name   string
+		cfg    Config
+		status int
+	}{
+		{"listed email", Config{WorkspaceCreationAllowedEmails: []string{handlerTestEmail}}, http.StatusBadRequest},
+		{"listed domain", Config{WorkspaceCreationAllowedEmailDomains: []string{"multica.ai"}}, http.StatusBadRequest},
+		{"unlisted account", Config{WorkspaceCreationAllowedEmails: []string{"other@example.com"}}, http.StatusForbidden},
+		{"global override", Config{DisableWorkspaceCreation: true, WorkspaceCreationAllowedEmails: []string{handlerTestEmail}}, http.StatusForbidden},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			testHandler.cfg = tt.cfg
+			// An empty body proves allowed requests pass the policy, without creating fixtures.
+			testutil.Call(t, testHandler.CreateWorkspace, newRequest("POST", "/api/workspaces", nil)).Want(tt.status)
+			var me UserResponse
+			testutil.Call(t, testHandler.GetMe, newRequest("GET", "/api/me", nil)).Want(http.StatusOK).JSON(&me)
+			if me.CanCreateWorkspace != (tt.status == http.StatusBadRequest) {
+				t.Fatalf("current-user capability disagrees with creation gate: %+v", me)
+			}
+		})
+	}
+}

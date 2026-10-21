@@ -65,6 +65,8 @@ STARTTLS is used automatically when advertised by the server. Port 465 (SMTPS / 
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
 | `GOOGLE_REDIRECT_URI` | OAuth callback URL (e.g. `https://app.example.com/auth/callback`) |
 
+To allow only team leads to create workspaces, leave `DISABLE_WORKSPACE_CREATION=false` and set `WORKSPACE_CREATION_ALLOWED_EMAILS=alice@example.com,bob@example.com` and/or `WORKSPACE_CREATION_ALLOWED_EMAIL_DOMAINS=platform.example.com`. Entries are comma-separated, trimmed, case-insensitive exact matches; either list may grant access. Domain matching does not include subdomains. Empty lists preserve unrestricted creation; `DISABLE_WORKSPACE_CREATION=true` overrides both. Signup allowlists remain independent. The authenticated user response exposes `can_create_workspace` for the UI; `/api/config` remains public and instance-scoped. Helm uses `backend.config.workspaceCreationAllowedEmails` and `workspaceCreationAllowedEmailDomains`.
+
 Changes take effect after restarting the backend / compose stack. The web UI reads `GOOGLE_CLIENT_ID` from `/api/config` at runtime, so no web rebuild is needed.
 
 ### Signup Controls (Optional)

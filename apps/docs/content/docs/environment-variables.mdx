@@ -113,7 +113,11 @@ SMTP takes priority over Resend whenever `SMTP_HOST` is non-empty.
 | `ALLOWED_EMAILS` | empty | Full email addresses allowed to sign up, comma-separated |
 | `ALLOWED_EMAIL_DOMAINS` | empty | Email domains allowed to sign up, comma-separated |
 | `DISABLE_WORKSPACE_CREATION` | `false` | Blocks all users from creating workspaces; no owner/admin exception |
+| `WORKSPACE_CREATION_ALLOWED_EMAILS` | _(empty)_ | Comma-separated exact email matches allowed to create workspaces |
+| `WORKSPACE_CREATION_ALLOWED_EMAIL_DOMAINS` | _(empty)_ | Comma-separated exact domain matches allowed to create workspaces; no subdomain matching |
 | `MULTICA_DEV_VERIFICATION_CODE` | empty | Fixed 6-digit test code for non-production environments |
+
+Workspace creation allowlists are independent of signup restrictions. If both are empty, creation remains unrestricted. Otherwise either list grants access; entries are trimmed and case-insensitive. `DISABLE_WORKSPACE_CREATION=true` overrides both. Restart the backend after changing these values. The current-user response exposes the account capability; public `/api/config` remains instance-scoped.
 
 For the exact allowlist evaluation order, see [Sign-in and signup](/auth-setup#signup-restrictions).
 

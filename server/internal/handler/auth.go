@@ -62,11 +62,12 @@ var supportedLanguages = map[string]struct{}{
 }
 
 type UserResponse struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	Email     string  `json:"email"`
-	AvatarURL *string `json:"avatar_url"`
-	Language  *string `json:"language"`
+	CanCreateWorkspace bool    `json:"can_create_workspace"`
+	ID                 string  `json:"id"`
+	Name               string  `json:"name"`
+	Email              string  `json:"email"`
+	AvatarURL          *string `json:"avatar_url"`
+	Language           *string `json:"language"`
 	// Pinned IANA tz; nil = no preference (use browser-detected tz).
 	Timezone                *string         `json:"timezone"`
 	OnboardedAt             *string         `json:"onboarded_at"`
@@ -91,6 +92,7 @@ func (h *Handler) userToResponse(u db.User) UserResponse {
 		q = []byte("{}")
 	}
 	return UserResponse{
+		CanCreateWorkspace:      h.canCreateWorkspace(u.Email),
 		ID:                      uuidToString(u.ID),
 		Name:                    u.Name,
 		Email:                   u.Email,

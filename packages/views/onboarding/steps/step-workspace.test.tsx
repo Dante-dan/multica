@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
@@ -30,6 +30,12 @@ const mockUseConfigStore = vi.hoisted(() =>
 vi.mock("../../auth", () => ({
   useLogout: () => mockLogout,
 }));
+
+const mockAccountCapability = vi.hoisted(() => ({ value: true }));
+vi.mock("@multica/core/auth", () => ({
+  useAuthStore: (selector: (s: { user: { can_create_workspace: boolean } }) => unknown) => selector({ user: { can_create_workspace: mockAccountCapability.value } }),
+}));
+beforeEach(() => { mockAccountCapability.value = true; });
 
 vi.mock("@multica/core/config", () => ({
   useConfigStore: (selector: (state: MockConfigState) => unknown) =>
@@ -327,4 +333,11 @@ describe("StepWorkspace — issue prefix", () => {
       issue_prefix: "ACME",
     });
   });
+});
+
+it("hides onboarding creation for a denied account when the instance allows creation", () => {
+  mockAccountCapability.value = false;
+  renderStep({ existing: null, disabled: false });
+  expect(screen.queryByLabelText("Workspace name")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /log out/i })).toBeInTheDocument();
 });

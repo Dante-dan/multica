@@ -215,6 +215,18 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(h.cfg.WorkspaceCreationAllowedEmails) > 0 || len(h.cfg.WorkspaceCreationAllowedEmailDomains) > 0 {
+		user, err := h.Queries.GetUser(r.Context(), parseUUID(userID))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load user")
+			return
+		}
+		if !h.canCreateWorkspace(user.Email) {
+			writeError(w, http.StatusForbidden, "workspace creation is not allowed for this account")
+			return
+		}
+	}
+
 	var req CreateWorkspaceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -1369,4 +1381,8 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	h.notifyDaemonWorkspacesChanged(affectedUserIDs...)
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) canCreateWorkspace(email string) bool {
+	return workspaceCreationAllowed(email, h.cfg.DisableWorkspaceCreation, h.cfg.WorkspaceCreationAllowedEmails, h.cfg.WorkspaceCreationAllowedEmailDomains)
 }
