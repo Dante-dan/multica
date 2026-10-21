@@ -798,6 +798,69 @@ anthropic/claude-sonnet-4-6
 	}
 }
 
+// The v2 catalog has a location/data envelope and an array of variant IDs.
+func TestDiscoverOpenCodeModelsV2Catalog(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake binary requires a POSIX shell")
+	}
+	fake := filepath.Join(t.TempDir(), "opencode")
+	writeTestExecutable(t, fake, []byte(`#!/bin/sh
+[ "$1" = "--profile" ] && [ "$2" = "work" ] || exit 1
+shift 2
+if [ "$1" = "api" ] && [ "$2" = "GET" ] && [ "$4" = "--standalone" ]; then
+  case "$3" in /api/model\?location%5Bdirectory%5D=*) ;; *) exit 1 ;; esac
+  cat <<'EOF'
+{"location":{"directory":"/workspace/project"},"data":[
+ {"id":"custom-alias","modelID":"upstream-model","providerID":"openai","enabled":true,"variants":[{"id":"high","body":{"reasoning":{"effort":"high"}}},{"id":"low"},{"id":"fast-mode"}]},
+ {"id":"disabled-model","providerID":"openai","enabled":false,"variants":[{"id":"high"}]},
+ {"id":"plain","providerID":"other","enabled":true,"variants":[]}
+]}
+EOF
+  exit 0
+fi
+if [ "$1" = "models" ] && [ -z "$2" ]; then
+  echo 'openai/custom-alias'
+  exit 0
+fi
+exit 2
+`))
+	models, err := discoverOpenCodeModels(context.Background(), NewCommand(fake, []string{"--profile", "work"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 3 || models[0].ID != "openai/custom-alias" || models[1].ID != "openai/disabled-model" || models[2].ID != "other/plain" {
+		t.Fatalf("expected API model references (not upstream modelID), got %+v", models)
+	}
+	if models[0].Thinking == nil {
+		t.Fatal("v2 model variants were lost")
+	}
+	want := []ThinkingLevel{{Value: "low", Label: "Low"}, {Value: "high", Label: "High"}, {Value: "fast-mode", Label: "Fast Mode"}}
+	if !reflect.DeepEqual(models[0].Thinking.SupportedLevels, want) {
+		t.Fatalf("variant IDs/order = %+v, want %+v", models[0].Thinking.SupportedLevels, want)
+	}
+	if models[2].Thinking != nil {
+		t.Fatalf("plain model unexpectedly has variants: %+v", models[2])
+	}
+}
+
+func TestDiscoverOpenCodeModelsKeepsVerboseCatalog(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake binary requires a POSIX shell")
+	}
+	fake := filepath.Join(t.TempDir(), "opencode")
+	writeTestExecutable(t, fake, []byte(`#!/bin/sh
+if [ "$1" = "models" ] && [ "$2" = "--verbose" ]; then
+  printf '%s\n' 'openai/gpt-5' '{"reasoning":true,"variants":{"high":{}}}'
+  exit 0
+fi
+exit 1
+`))
+	models, err := discoverOpenCodeModels(context.Background(), Command{Path: fake})
+	if err != nil || len(models) != 1 || models[0].Thinking == nil {
+		t.Fatalf("v1 verbose catalog lost: models=%+v err=%v", models, err)
+	}
+}
+
 func TestDiscoverOpenCodeModelsFallsBackWhenVerboseFails(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake binary requires a POSIX shell")
