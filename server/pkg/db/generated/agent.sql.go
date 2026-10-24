@@ -4938,6 +4938,54 @@ func (q *Queries) HasTaskForIssue(ctx context.Context, issueID pgtype.UUID) (boo
 	return exists, err
 }
 
+const isIssueTaskSessionSourceChanged = `-- name: IsIssueTaskSessionSourceChanged :one
+SELECT EXISTS (
+    SELECT 1
+    FROM agent_task_queue t
+    WHERE t.agent_id = $1
+      AND t.issue_id = $2
+      AND t.session_id = $3::text
+      AND (
+        t.context->>'comment_change_cancelled_task_id' = t.id::text
+        OR EXISTS (
+            SELECT 1
+            FROM unnest(
+                COALESCE(t.delivered_comment_ids, '{}'::uuid[])
+                || COALESCE(t.supplement_comment_ids, '{}'::uuid[])
+                || COALESCE(t.coalesced_comment_ids, '{}'::uuid[])
+                || ARRAY[t.trigger_comment_id]
+            ) AS input(id)
+            JOIN issue i ON i.id = t.issue_id
+            LEFT JOIN comment c ON c.id = input.id
+              AND c.issue_id = t.issue_id AND c.workspace_id = i.workspace_id
+            WHERE input.id IS NOT NULL
+              AND COALESCE(t.dispatched_at, t.started_at) IS NOT NULL
+              AND (c.id IS NULL OR (
+                (c.deleted_at IS NOT NULL OR c.revision > 1)
+                AND c.updated_at > COALESCE(t.dispatched_at, t.started_at)
+              ))
+        )
+      )
+) AS changed
+`
+
+type IsIssueTaskSessionSourceChangedParams struct {
+	AgentID   pgtype.UUID `json:"agent_id"`
+	IssueID   pgtype.UUID `json:"issue_id"`
+	SessionID string      `json:"session_id"`
+}
+
+// A provider transcript retains previously delivered bodies even though claim
+// payloads read current comments. Check every run sharing the session: a later
+// healthy turn must not hide an earlier input that has since been edited.
+// Ordinary user cancellation alone does not invalidate conversation history.
+func (q *Queries) IsIssueTaskSessionSourceChanged(ctx context.Context, arg IsIssueTaskSessionSourceChangedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isIssueTaskSessionSourceChanged, arg.AgentID, arg.IssueID, arg.SessionID)
+	var changed bool
+	err := row.Scan(&changed)
+	return changed, err
+}
+
 const isTaskSessionRetired = `-- name: IsTaskSessionRetired :one
 SELECT EXISTS (
     SELECT 1 FROM agent_task_queue r

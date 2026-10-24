@@ -3468,6 +3468,23 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			applyFreshSessionRetryWorkdir(*task, &resp, requestHasClientCapability(r, protocol.DaemonCapabilityCheckoutKeepsWorkV1))
 		}
 
+		// Fresh comment payloads cannot remove obsolete text from a provider's
+		// transcript. Preserve the checkout, but rebuild conversation context when
+		// an input to any earlier turn in this session has changed.
+		if resp.PriorSessionID != "" {
+			changed, err := h.Queries.IsIssueTaskSessionSourceChanged(r.Context(), db.IsIssueTaskSessionSourceChangedParams{
+				AgentID: task.AgentID, IssueID: task.IssueID, SessionID: resp.PriorSessionID,
+			})
+			if err != nil {
+				slog.Warn("daemon claim: source-change lookup failed; starting fresh", "task_id", uuidToString(task.ID), "error", err)
+			}
+			if changed || err != nil {
+				resp.PriorSessionID = ""
+				resp.PriorSessionResumeUnavailable = true
+				resumeAnchor = nil
+			}
+		}
+
 		// Both deltas, now that the resume source is known (MUL-7344).
 		//
 		// resumeAnchor is non-nil only where a session was actually ADOPTED

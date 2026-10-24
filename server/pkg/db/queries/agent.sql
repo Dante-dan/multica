@@ -1525,6 +1525,40 @@ SELECT EXISTS (
       AND r.retired_session_id = sqlc.arg('session_id')::text
 ) AS retired;
 
+-- name: IsIssueTaskSessionSourceChanged :one
+-- A provider transcript retains previously delivered bodies even though claim
+-- payloads read current comments. Check every run sharing the session: a later
+-- healthy turn must not hide an earlier input that has since been edited.
+-- Ordinary user cancellation alone does not invalidate conversation history.
+SELECT EXISTS (
+    SELECT 1
+    FROM agent_task_queue t
+    WHERE t.agent_id = sqlc.arg('agent_id')
+      AND t.issue_id = sqlc.arg('issue_id')
+      AND t.session_id = sqlc.arg('session_id')::text
+      AND (
+        t.context->>'comment_change_cancelled_task_id' = t.id::text
+        OR EXISTS (
+            SELECT 1
+            FROM unnest(
+                COALESCE(t.delivered_comment_ids, '{}'::uuid[])
+                || COALESCE(t.supplement_comment_ids, '{}'::uuid[])
+                || COALESCE(t.coalesced_comment_ids, '{}'::uuid[])
+                || ARRAY[t.trigger_comment_id]
+            ) AS input(id)
+            JOIN issue i ON i.id = t.issue_id
+            LEFT JOIN comment c ON c.id = input.id
+              AND c.issue_id = t.issue_id AND c.workspace_id = i.workspace_id
+            WHERE input.id IS NOT NULL
+              AND COALESCE(t.dispatched_at, t.started_at) IS NOT NULL
+              AND (c.id IS NULL OR (
+                (c.deleted_at IS NOT NULL OR c.revision > 1)
+                AND c.updated_at > COALESCE(t.dispatched_at, t.started_at)
+              ))
+        )
+      )
+) AS changed;
+
 -- name: SetAgentTaskRetiredSessionIDIfCancelled :execrows
 -- Cancel-ack companion to CompleteAgentTask/FailAgentTask's retired_session_id
 -- (MUL-8188). A resumed run that produced no output at all before it was
