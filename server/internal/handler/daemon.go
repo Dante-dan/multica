@@ -3052,6 +3052,12 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		RuntimeConfig:         runtimeConfig,
 		DisabledRuntimeSkills: disabledRuntimeSkillsFor(agent.DisabledRuntimeSkills, runtimeID, runtime.Provider),
 	}
+	// Snapshot the agent's persistent OpenClaw model override for this claim.
+	// It applies to every claim until changed or cleared; later edits do not
+	// affect payloads already delivered to the daemon.
+	if runtime.Provider == "openclaw" {
+		resp.ModelOverride = openclawModelOverride(agent.RuntimeConfig)
+	}
 	// System agents carry a product-owned instruction layer that ships with
 	// this binary instead of being copied into their row at creation. That
 	// is what makes it hot-updatable: editing the embedded file and
@@ -3207,6 +3213,19 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// (No FK on squad_id — see migration 127.) We append (not replace)
 		// so per-agent instructions stay authoritative; the squad briefing
 		// stacks on top as task-specific squad context.
+		// Project workflow (MUL-7420): best-effort, like the status catalog
+		// below — a failure degrades to the workspace-wide status rules.
+		// Resolved before the leader briefing, which words the owning
+		// leader's status moves by it (MUL-8145).
+		legacyRuntimeRules := !requestHasClientCapability(r, protocol.DaemonCapabilityWorkflowStatusRulesV1)
+		projectWorkflow := h.claimProjectWorkflow(r.Context(), issue, task, legacyRuntimeRules)
+		leaderWorkflow := leaderNoWorkflow
+		if projectWorkflow != nil {
+			leaderWorkflow = leaderWorkflowCurrentDaemon
+			if legacyRuntimeRules {
+				leaderWorkflow = leaderWorkflowLegacyDaemon
+			}
+		}
 		if task.IsLeaderTask {
 			injected := false
 			if resp.Agent != nil && task.SquadID.Valid {
@@ -3225,7 +3244,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					ownsIssueStatus := issue.AssigneeType.Valid &&
 						issue.AssigneeType.String == "squad" &&
 						uuidToString(issue.AssigneeID) == uuidToString(squad.ID)
-					briefing := buildSquadLeaderBriefing(r.Context(), h.Queries, squad, ownsIssueStatus)
+					briefing := buildSquadLeaderBriefing(r.Context(), h.Queries, squad, ownsIssueStatus, leaderWorkflow)
 					if strings.TrimSpace(resp.Agent.Instructions) == "" {
 						resp.Agent.Instructions = briefing
 					} else {
@@ -3271,9 +3290,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}
 		}
 		projectCtx.applyTo(&resp)
-		// Project workflow (MUL-7420): best-effort, like the status catalog
-		// below — a failure degrades to the workspace-wide status rules.
-		resp.ProjectWorkflow = h.claimProjectWorkflow(r.Context(), issue, task)
+		resp.ProjectWorkflow = projectWorkflow
 
 		// Load every planned input as one chronological, de-duplicated set.
 		// The trigger is included here so the delivery receipt can only contain
@@ -4047,7 +4064,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 						// status to own on this turn. Once the leader opens the
 						// issue with the squad as assignee, the issue-bound
 						// claim path above grants ownership.
-						briefing := buildSquadLeaderBriefing(r.Context(), h.Queries, squad, false)
+						briefing := buildSquadLeaderBriefing(r.Context(), h.Queries, squad, false, leaderNoWorkflow)
 						if strings.TrimSpace(resp.Agent.Instructions) == "" {
 							resp.Agent.Instructions = briefing
 						} else {
