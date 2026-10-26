@@ -971,13 +971,20 @@ func TestAntigravityBackendIgnoresTrailingNetworkErrorAfterDoneResponse(t *testi
 func TestAntigravityBackendRecoveredStreamInterruption(t *testing.T) {
 	t.Parallel()
 
-	for _, done := range []bool{true, false} {
-		t.Run(fmt.Sprintf("response_done=%v", done), func(t *testing.T) {
+	for _, tc := range []struct {
+		done     bool
+		exitCode int
+	}{
+		{done: true, exitCode: 0},
+		{done: false, exitCode: 0},
+		{done: true, exitCode: 1},
+	} {
+		t.Run(fmt.Sprintf("response_done=%v/exit=%d", tc.done, tc.exitCode), func(t *testing.T) {
 			t.Parallel()
 			fakePath := filepath.Join(t.TempDir(), "agy")
-			script := strings.ReplaceAll(fakeAgyTrailingNetworkErrorScript(done), antigravityNetworkIssueError,
+			script := strings.ReplaceAll(fakeAgyTrailingNetworkErrorScript(tc.done), antigravityNetworkIssueError,
 				"The stream was interrupted. Please continue the task you were working on.")
-			script = strings.ReplaceAll(script, "exit 1", "exit 0")
+			script = strings.ReplaceAll(script, "exit 1", fmt.Sprintf("exit %d", tc.exitCode))
 			writeTestExecutable(t, fakePath, []byte(script))
 
 			backend, err := New("antigravity", Config{ExecutablePath: fakePath, Logger: quietAntigravityLogger()})
@@ -997,10 +1004,11 @@ func TestAntigravityBackendRecoveredStreamInterruption(t *testing.T) {
 				t.Fatal("result channel closed without a value")
 			}
 			wantStatus := "failed"
-			if done {
+			completed := tc.done && tc.exitCode == 0
+			if completed {
 				wantStatus = "completed"
 			}
-			if result.Status != wantStatus || result.Output != "Complete answer." || (result.Error == "") != done {
+			if result.Status != wantStatus || result.Output != "Complete answer." || (result.Error == "") != completed {
 				t.Fatalf("result = status %q output %q error %q", result.Status, result.Output, result.Error)
 			}
 		})
@@ -1200,7 +1208,7 @@ func TestAntigravityCompletedDespiteTrailingNetworkErrorRequiresAllThree(t *test
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := antigravityCompletedDespiteTrailingNetworkError(tc.err, tc.response, tc.agentResponseDone)
+			got := antigravityCompletedDespiteTrailingNetworkError(tc.err, tc.response, tc.agentResponseDone, false)
 			if got != tc.want {
 				t.Fatalf("antigravityCompletedDespiteTrailingNetworkError(%q, %q, %v) = %v, want %v",
 					tc.err, tc.response, tc.agentResponseDone, got, tc.want)
