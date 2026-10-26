@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
@@ -772,8 +773,9 @@ func isOpenAIReasoningSeriesID(id string) bool {
 // output. The CLI prints `provider/model` rows, followed by JSON metadata
 // when verbose mode is enabled; we emit IDs verbatim so what the user sees
 // matches what `--model` accepts, and project any model `variants` into the
-// thinking-level picker because OpenCode's `run --variant` flag is its
-// provider-specific reasoning-effort surface.
+// thinking-level picker, forwarded as `run --variant` on 1.x and as a
+// `provider/model#variant` reference on 2.x.
+// OpenCode 2.x drops verbose output; its standalone model API supplies variants.
 // On any failure (CLI missing, parse error, timeout) we fall back to
 // an empty list so the creatable UI still works.
 func discoverOpenCodeModels(ctx context.Context, runtimeCmd Command) ([]Model, error) {
@@ -797,7 +799,23 @@ func discoverOpenCodeModels(ctx context.Context, runtimeCmd Command) ([]Model, e
 	out, _ := outputOwned(cmd, runtimeCmd.logger)
 	models := parseOpenCodeModels(string(out))
 	if len(models) == 0 {
-		// Verbose yielded nothing usable (unsupported flag, error text, or an
+		// Keep the CLI's current location and runtime prefix (including profile)
+		// when querying 2.x. Bound the API attempt so plain discovery still has
+		// time to run if a provider/plugin stalls during standalone startup.
+		if directory, err := os.Getwd(); err == nil {
+			apiCtx, apiCancel := context.WithTimeout(runCtx, 7*time.Second)
+			query := url.Values{"location[directory]": {directory}}
+			cmd = runtimeCmd.exec(apiCtx, "api", "GET", "/api/model?"+query.Encode(), "--standalone")
+			hideAgentWindow(cmd)
+			out, err := outputOwned(cmd, runtimeCmd.logger)
+			apiCancel()
+			if err == nil {
+				models = parseOpenCodeAPIModels(out)
+			}
+		}
+	}
+	if len(models) == 0 {
+		// Verbose/API yielded nothing usable (unsupported flag, error text, or an
 		// empty list). Retry the plain command, which omits the per-model JSON
 		// but still prints the IDs.
 		cmd = runtimeCmd.exec(runCtx, "models")
@@ -809,6 +827,45 @@ func discoverOpenCodeModels(ctx context.Context, runtimeCmd Command) ([]Model, e
 		return []Model{}, nil
 	}
 	return models, nil
+}
+
+// parseOpenCodeAPIModels reads OpenCode 2.x's Location.response(Model.Info[]).
+// IDs are providerID/id, not modelID: custom aliases must survive round-trips.
+func parseOpenCodeAPIModels(output []byte) []Model {
+	var response struct {
+		Data []struct {
+			ID         string `json:"id"`
+			ProviderID string `json:"providerID"`
+			Variants   []struct {
+				ID string `json:"id"`
+			} `json:"variants"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(output, &response); err != nil {
+		return nil
+	}
+	var models []Model
+	seen := make(map[string]bool)
+	for _, entry := range response.Data {
+		if entry.ID == "" || entry.ProviderID == "" {
+			continue
+		}
+		id := entry.ProviderID + "/" + entry.ID
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		model := Model{ID: id, Label: id, Provider: entry.ProviderID}
+		variants := make(map[string]opencodeModelVariant, len(entry.Variants))
+		for _, variant := range entry.Variants {
+			variants[variant.ID] = opencodeModelVariant{}
+		}
+		if levels := openCodeThinkingLevelsFromVariants(variants); len(levels) > 0 {
+			model.Thinking = &ModelThinking{SupportedLevels: levels}
+		}
+		models = append(models, model)
+	}
+	return models
 }
 
 // parseOpenCodeModels accepts the `opencode models` text output and
