@@ -99,15 +99,18 @@ func TestDaemonEnrollmentLifecycle(t *testing.T) {
 	check(old, http.StatusUnauthorized)
 	check("mds_derived", http.StatusUnauthorized)
 	check(enrollment.Token, http.StatusOK)
-	for _, body := range []map[string]any{
-		{"workspace_id": testWorkspaceID, "daemon_id": "another-host", "runtimes": []map[string]any{{"provider": "multica_daemon", "name": "Other host"}}},
-		{"workspace_id": "11111111-1111-1111-1111-111111111111", "daemon_id": host, "runtimes": []map[string]any{{"provider": "multica_daemon", "name": "Other workspace"}}},
+	for _, tc := range []struct {
+		body map[string]any
+		want int
+	}{
+		{map[string]any{"workspace_id": testWorkspaceID, "daemon_id": "another-host", "runtimes": []map[string]any{{"provider": "multica_daemon", "name": "Other host"}}}, http.StatusForbidden},
+		{map[string]any{"workspace_id": "11111111-1111-1111-1111-111111111111", "daemon_id": host, "runtimes": []map[string]any{{"provider": "multica_daemon", "name": "Other workspace"}}}, http.StatusNotFound},
 	} {
-		req := newRequest(http.MethodPost, "/api/daemon/register", body)
+		req := newRequest(http.MethodPost, "/api/daemon/register", tc.body)
 		req.Header.Set("Authorization", "Bearer "+enrollment.Token)
 		req.Header.Set("X-User-ID", testUserID)
 		next := middleware.DaemonAuth(testHandler.Queries, nil, nil, nil, testPool)(http.HandlerFunc(testHandler.DaemonRegister))
-		testutil.Call(t, next.ServeHTTP, req).Want(http.StatusNotFound)
+		testutil.Call(t, next.ServeHTTP, req).Want(tc.want)
 	}
 	revoke := enrollmentLifecycleRequest(http.MethodDelete, enrollment.ID)
 	testutil.Call(t, testHandler.RevokeDaemonEnrollment, revoke).Want(http.StatusOK)
