@@ -190,6 +190,10 @@ type antigravityStreamEvent struct {
 // has to stay a literal match alongside the transport patterns below.
 const antigravityNetworkIssueError = "There was a network issue connecting to the server, please try again."
 
+// agy 1.4.6 may carry this historical/recovered stream error into a resumed
+// turn's result even when the current final response is DONE (#9528).
+const antigravityStreamInterruptedError = "The stream was interrupted. Please continue the task you were working on."
+
 // antigravityTransportErrorRe matches the causes Go's http client reports when
 // a round trip never produced a response: socket, DNS and TLS failures. These
 // are the strings that appear inside the `*url.Error` agy wraps as
@@ -217,7 +221,7 @@ func antigravityTrailingTransportError(providerError string) bool {
 	if trimmed == "" {
 		return false
 	}
-	if strings.EqualFold(trimmed, antigravityNetworkIssueError) {
+	if strings.EqualFold(trimmed, antigravityNetworkIssueError) || strings.EqualFold(trimmed, antigravityStreamInterruptedError) {
 		return true
 	}
 	return antigravityTransportErrorRe.MatchString(trimmed)
