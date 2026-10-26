@@ -413,7 +413,7 @@ export function TriggerRow({ trigger, autopilotId, canWrite }: { trigger: Autopi
         )}
         {isWebhook && (
           <WebhookPayloadPolicySelect
-            value={trigger.webhook_payload_policy ?? "redacted"}
+            value={trigger.webhook_payload_policy === "metadata_only" ? "metadata_only" : "redacted"}
             disabled={!canWrite || updateTrigger.isPending}
             onChange={async (webhook_payload_policy) => {
               try {
