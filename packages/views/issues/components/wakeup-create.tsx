@@ -475,6 +475,7 @@ function ConditionParams({
               { value: "done", label: t(($) => $.wakeups.create.other_done) },
               { value: "ended", label: t(($) => $.wakeups.create.other_ended) },
               { value: "in_review", label: t(($) => $.wakeups.create.other_in_review) },
+              { value: "handoff", label: t(($) => $.wakeups.create.other_handoff) },
             ]}
             onChange={(otherState) => update({ otherState: otherState as WakeupDraft["otherState"] })}
           />

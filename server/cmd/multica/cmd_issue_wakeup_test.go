@@ -172,6 +172,7 @@ func TestIssueWakeupCLIConditionsAndManagement(t *testing.T) {
 		args []string
 		want string
 	}{
+		{[]string{"--until-issue", issue, "--until-issue-state", "handoff"}, `{"issue_id":"` + issue + `","state":"handoff","type":"other_issue"}`},
 		{[]string{"--until-status", "in_review"}, `{"field":"status","type":"issue_field","value":"in_review"}`},
 		{[]string{"--until-property", "p1=\"approved\""}, `{"field":"property","property_id":"p1","type":"issue_field","value":"approved"}`},
 		{[]string{"--until-property", "p1=approved"}, `{"field":"property","property_id":"p1","type":"issue_field","value":"approved"}`},

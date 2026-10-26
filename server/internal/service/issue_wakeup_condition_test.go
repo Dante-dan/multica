@@ -826,3 +826,62 @@ func TestWakeupConditionVCSChecksKeyedByPullRequest(t *testing.T) {
 		}
 	})
 }
+
+// #9344: a child's review/blocker handoff must not require closure.
+func TestOtherIssueHandoffState(t *testing.T) {
+	for _, status := range []string{"backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			category := "started"
+			if status == "done" {
+				category = "done"
+			}
+			if status == "cancelled" {
+				category = "closed"
+			}
+			want := status == "in_review" || status == "blocked"
+			if got := otherIssueStateMatches("handoff", status, category); got != want {
+				t.Fatalf("handoff(%s) = %t, want %t", status, got, want)
+			}
+			if got := otherIssueStateMatches("done", status, category); got != (status == "done") {
+				t.Fatalf("done(%s) = %t", status, got)
+			}
+			if got := otherIssueStateMatches("ended", status, category); got != (status == "done" || status == "cancelled") {
+				t.Fatalf("ended(%s) = %t", status, got)
+			}
+		})
+	}
+}
+
+func TestWakeupConditionChildHandoff(t *testing.T) {
+	for _, status := range []string{"in_review", "blocked"} {
+		t.Run(status, func(t *testing.T) {
+			f, s, parent, agent := conditionFixture(t)
+			child := f.Issue(t, "Worker result", testutil.Cols{"parent_id": parent, "status": "in_progress"})
+			f.Issue(t, "Unrelated", testutil.Cols{"status": status})
+			w := wakeCreate(t, f, s, parent, WakeupInput{AgentID: agent, Kind: "event", Instruction: "Inspect child result or blocker; do not infer approval",
+				Condition: condition(t, map[string]any{"type": "other_issue", "issue_id": child, "state": "handoff"})})
+			wakeTick(t, f, s, w.ID)
+			if wakeRuns(t, f, w.ID) != 0 {
+				t.Fatal("unrelated issue satisfied handoff")
+			}
+			wakeSetStatus(t, f, parseTestUUID(t, child), status)
+			got := wakeTick(t, f, s, w.ID)
+			if got.Enabled || got.FireCount != 1 || wakeRuns(t, f, w.ID) != 1 {
+				t.Fatalf("handoff did not fire once: %+v", got)
+			}
+			task, err := f.q.GetAgentTask(context.Background(), got.LastTaskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(task.HandoffNote.String, child) || !strings.Contains(task.HandoffNote.String, `"status":"`+status+`"`) {
+				t.Fatalf("missing handoff identity: %s", task.HandoffNote.String)
+			}
+			wakeSetStatus(t, f, parseTestUUID(t, child), "in_progress")
+			wakeSetStatus(t, f, parseTestUUID(t, child), status)
+			wakeTick(t, f, s, w.ID)
+			if wakeRuns(t, f, w.ID) != 1 {
+				t.Fatal("repeated status caused duplicate handoff")
+			}
+		})
+	}
+}
