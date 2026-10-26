@@ -44,10 +44,10 @@ func (w *rpcResponseCapture) Write(b []byte) (int, error) {
 // see the same scope as the HTTP path.
 func (h *Handler) DaemonRPCHandler(ctx context.Context, identity daemonws.ClientIdentity, method string, body json.RawMessage) (int, json.RawMessage, error) {
 	if identity.EnrollmentTokenHash != "" {
-		if h.TxStarter == nil || h.Queries == nil {
+		if h.EnrollmentTxStarter == nil || h.Queries == nil {
 			return http.StatusServiceUnavailable, nil, fmt.Errorf("daemon enrollment unavailable")
 		}
-		tx, err := h.TxStarter.Begin(ctx)
+		tx, err := h.EnrollmentTxStarter.Begin(ctx)
 		if err != nil {
 			return http.StatusServiceUnavailable, nil, err
 		}
@@ -84,6 +84,10 @@ func (h *Handler) rpcClaimTasks(ctx context.Context, identity daemonws.ClientIde
 	// workspaces).
 	if identity.DaemonID != "" {
 		reqCtx = middleware.WithDaemonContext(reqCtx, identity.PrimaryWorkspaceID(), identity.DaemonID)
+		// Carry the connection's credential so per-call revocation checks
+		// (Qoder) validate the real token instead of an empty header.
+		reqCtx = middleware.WithDaemonTokenHash(reqCtx, identity.DaemonTokenHash)
+		reqCtx = middleware.WithDaemonTokenOwnerID(reqCtx, identity.DaemonTokenOwnerID)
 	}
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, "/api/daemon/tasks/claim", bytes.NewReader(body))
 	if err != nil {

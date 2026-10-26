@@ -12,9 +12,9 @@ import (
 )
 
 const createDaemonToken = `-- name: CreateDaemonToken :one
-INSERT INTO daemon_token (token_hash, workspace_id, daemon_id, expires_at, enrollment_token_hash)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, token_hash, workspace_id, daemon_id, expires_at, created_at, enrollment_token_hash
+INSERT INTO daemon_token (token_hash, workspace_id, daemon_id, expires_at, owner_id, enrollment_token_hash)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, token_hash, workspace_id, daemon_id, expires_at, created_at, owner_id, enrollment_token_hash
 `
 
 type CreateDaemonTokenParams struct {
@@ -22,15 +22,19 @@ type CreateDaemonTokenParams struct {
 	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
 	DaemonID            string             `json:"daemon_id"`
 	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	OwnerID             pgtype.UUID        `json:"owner_id"`
 	EnrollmentTokenHash pgtype.Text        `json:"enrollment_token_hash"`
 }
 
+// owner_id binds the token to the runtime owner it was issued for (MUL-8154);
+// NULL only for Qoder-managed tokens.
 func (q *Queries) CreateDaemonToken(ctx context.Context, arg CreateDaemonTokenParams) (DaemonToken, error) {
 	row := q.db.QueryRow(ctx, createDaemonToken,
 		arg.TokenHash,
 		arg.WorkspaceID,
 		arg.DaemonID,
 		arg.ExpiresAt,
+		arg.OwnerID,
 		arg.EnrollmentTokenHash,
 	)
 	var i DaemonToken
@@ -41,6 +45,7 @@ func (q *Queries) CreateDaemonToken(ctx context.Context, arg CreateDaemonTokenPa
 		&i.DaemonID,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.OwnerID,
 		&i.EnrollmentTokenHash,
 	)
 	return i, err
@@ -96,7 +101,7 @@ func (q *Queries) DeleteExpiredDaemonTokens(ctx context.Context) error {
 }
 
 const getDaemonTokenByHash = `-- name: GetDaemonTokenByHash :one
-SELECT id, token_hash, workspace_id, daemon_id, expires_at, created_at, enrollment_token_hash FROM daemon_token
+SELECT id, token_hash, workspace_id, daemon_id, expires_at, created_at, owner_id, enrollment_token_hash FROM daemon_token
 WHERE token_hash = $1 AND expires_at > now()
 `
 
@@ -110,7 +115,55 @@ func (q *Queries) GetDaemonTokenByHash(ctx context.Context, tokenHash string) (D
 		&i.DaemonID,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.OwnerID,
 		&i.EnrollmentTokenHash,
 	)
 	return i, err
+}
+
+const listLegacyDaemonTokenOwners = `-- name: ListLegacyDaemonTokenOwners :many
+SELECT DISTINCT tt.user_id
+FROM task_token tt
+JOIN agent_task_queue q ON q.id = tt.task_id
+JOIN agent_runtime r ON r.id = q.runtime_id
+WHERE tt.workspace_id = $1
+  AND tt.created_at = $2
+  AND tt.expires_at > now()
+  AND r.workspace_id = $1
+  AND r.daemon_id = $3::text
+LIMIT 2
+`
+
+type ListLegacyDaemonTokenOwnersParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	DaemonID    string             `json:"daemon_id"`
+}
+
+// Compatibility for Remote MCP daemon tokens minted before migration 588
+// (owner_id NULL). Up to v0.6.5 FinalizeTaskClaim inserted that token and the
+// task's task_token in one transaction, so both rows carry the same
+// created_at (now() is the transaction start). task_token.user_id is the
+// runtime owner the claim was authorized for, i.e. the token's issuing owner.
+// The task must still be live (task_token not deleted/expired) and bound to a
+// runtime of the token's daemon. Callers accept the result only when exactly
+// one owner matches; LIMIT 2 is enough to detect ambiguity.
+func (q *Queries) ListLegacyDaemonTokenOwners(ctx context.Context, arg ListLegacyDaemonTokenOwnersParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listLegacyDaemonTokenOwners, arg.WorkspaceID, arg.CreatedAt, arg.DaemonID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var user_id pgtype.UUID
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

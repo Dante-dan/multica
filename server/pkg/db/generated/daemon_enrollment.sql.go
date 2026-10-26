@@ -75,6 +75,30 @@ func (q *Queries) DeleteDaemonEnrollmentsByWorkspace(ctx context.Context, worksp
 	return err
 }
 
+const deleteDaemonTokensByEnrollment = `-- name: DeleteDaemonTokensByEnrollment :many
+DELETE FROM daemon_token WHERE enrollment_token_hash = $1 RETURNING token_hash
+`
+
+func (q *Queries) DeleteDaemonTokensByEnrollment(ctx context.Context, enrollmentTokenHash pgtype.Text) ([]string, error) {
+	rows, err := q.db.Query(ctx, deleteDaemonTokensByEnrollment, enrollmentTokenHash)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var token_hash string
+		if err := rows.Scan(&token_hash); err != nil {
+			return nil, err
+		}
+		items = append(items, token_hash)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDaemonEnrollments = `-- name: ListDaemonEnrollments :many
 SELECT id, workspace_id, daemon_id, name, creator_id, token_hash, generation, expires_at, revoked_at, created_at, updated_at FROM daemon_enrollment WHERE workspace_id = $1 ORDER BY created_at, id
 `

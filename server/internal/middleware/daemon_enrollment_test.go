@@ -1,9 +1,13 @@
 package middleware
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func TestDaemonEnrollmentFailsClosedWithoutAuthority(t *testing.T) {
@@ -32,5 +36,65 @@ func TestDerivedEnrollmentFailsClosedWithoutAuthority(t *testing.T) {
 	DaemonAuth(nil, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true })).ServeHTTP(res, req)
 	if called || res.Code != http.StatusServiceUnavailable {
 		t.Fatalf("derived enrollment must fail closed: status %d called %v", res.Code, called)
+	}
+}
+
+type enrollmentBudgetTestStarter struct {
+	calls int
+	fail  bool
+}
+
+func (s *enrollmentBudgetTestStarter) Begin(context.Context) (pgx.Tx, error) {
+	s.calls++
+	if s.fail {
+		return nil, errors.New("database unavailable")
+	}
+	return &enrollmentBudgetTestTx{}, nil
+}
+
+type enrollmentBudgetTestTx struct{ pgx.Tx }
+
+func (*enrollmentBudgetTestTx) Commit(context.Context) error   { return nil }
+func (*enrollmentBudgetTestTx) Rollback(context.Context) error { return nil }
+
+func TestEnrollmentBudgetLeavesConnectionsForProtectedHandlers(t *testing.T) {
+	starter := &enrollmentBudgetTestStarter{}
+	budget := &enrollmentTxBudget{starter: starter, slots: make(chan struct{}, 1)}
+	ctx := context.Background()
+	tx, err := budget.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := budget.Begin(ctx); err == nil || starter.calls != 1 {
+		t.Fatalf("exhausted authorization budget must not acquire another pool connection: %v, calls=%d", err, starter.calls)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	next, err := budget.Begin(ctx)
+	if err != nil {
+		t.Fatalf("completed authorization did not release capacity: %v", err)
+	}
+	if err := next.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnrollmentBudgetReturnsCapacityAfterDatabaseFailure(t *testing.T) {
+	starter := &enrollmentBudgetTestStarter{fail: true}
+	budget := &enrollmentTxBudget{starter: starter, slots: make(chan struct{}, 1)}
+	if _, err := budget.Begin(context.Background()); err == nil {
+		t.Fatal("expected database failure")
+	}
+	starter.fail = false
+	tx, err := budget.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("failed authorization leaked capacity: %v", err)
+	}
+	if err := tx.Rollback(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }

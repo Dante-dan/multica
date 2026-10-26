@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/auth"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -15,6 +17,53 @@ import (
 // daemon request against concurrent rotation/revocation. No auth cache is used.
 type EnrollmentTxStarter interface {
 	Begin(context.Context) (pgx.Tx, error)
+}
+
+// Enrollment fences hold one connection while downstream handlers use the pool.
+// Leave at least half the pool available to complete those protected operations.
+func NewEnrollmentTxStarter(starter EnrollmentTxStarter) EnrollmentTxStarter {
+	pool, ok := starter.(*pgxpool.Pool)
+	if !ok || pool == nil {
+		return nil
+	}
+	return &enrollmentTxBudget{starter: starter, slots: make(chan struct{}, pool.Config().MaxConns/2)}
+}
+
+type enrollmentTxBudget struct {
+	starter EnrollmentTxStarter
+	slots   chan struct{}
+}
+
+func (b *enrollmentTxBudget) Begin(ctx context.Context) (pgx.Tx, error) {
+	select {
+	case b.slots <- struct{}{}:
+	default:
+		return nil, errors.New("daemon enrollment database capacity unavailable")
+	}
+	tx, err := b.starter.Begin(ctx)
+	if err != nil {
+		<-b.slots
+		return nil, err
+	}
+	return &enrollmentBudgetTx{Tx: tx, release: func() { <-b.slots }}, nil
+}
+
+type enrollmentBudgetTx struct {
+	pgx.Tx
+	release func()
+	once    sync.Once
+}
+
+func (tx *enrollmentBudgetTx) Commit(ctx context.Context) error {
+	err := tx.Tx.Commit(ctx)
+	tx.once.Do(tx.release)
+	return err
+}
+
+func (tx *enrollmentBudgetTx) Rollback(ctx context.Context) error {
+	err := tx.Tx.Rollback(ctx)
+	tx.once.Do(tx.release)
+	return err
 }
 
 type enrollmentContextKey int
@@ -49,8 +98,9 @@ func serveEnrolledDaemon(w http.ResponseWriter, r *http.Request, next http.Handl
 	}
 	defer tx.Rollback(context.Background())
 	hash := auth.HashToken(raw)
+	var derived *db.DaemonToken
 	if len(raw) > 4 && raw[:4] == "mds_" {
-		derived, err := queries.WithTx(tx).GetDaemonTokenByHash(r.Context(), hash)
+		row, err := queries.WithTx(tx).GetDaemonTokenByHash(r.Context(), hash)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				writeError(w, http.StatusUnauthorized, "invalid derived daemon credential")
@@ -59,6 +109,7 @@ func serveEnrolledDaemon(w http.ResponseWriter, r *http.Request, next http.Handl
 			}
 			return
 		}
+		derived = &row
 		if !derived.EnrollmentTokenHash.Valid {
 			writeError(w, http.StatusUnauthorized, "invalid derived daemon credential")
 			return
@@ -78,7 +129,12 @@ func serveEnrolledDaemon(w http.ResponseWriter, r *http.Request, next http.Handl
 		writeError(w, http.StatusUnauthorized, "invalid daemon enrollment credential")
 		return
 	}
-	ctx := context.WithValue(r.Context(), ctxKeyDaemonWorkspaceID, uuidToString(enrollment.WorkspaceID))
+	if derived != nil && (derived.WorkspaceID != enrollment.WorkspaceID || derived.DaemonID != enrollment.DaemonID || derived.OwnerID != enrollment.CreatorID) {
+		writeError(w, http.StatusUnauthorized, "invalid derived daemon credential")
+		return
+	}
+	ctx := WithDaemonTokenOwnerID(r.Context(), uuidToString(enrollment.CreatorID))
+	ctx = context.WithValue(ctx, ctxKeyDaemonWorkspaceID, uuidToString(enrollment.WorkspaceID))
 	ctx = context.WithValue(ctx, ctxKeyDaemonID, enrollment.DaemonID)
 	ctx = context.WithValue(ctx, ctxKeyDaemonAuthPath, "daemon_enrollment")
 	ctx = context.WithValue(ctx, enrollmentHashKey, hash)

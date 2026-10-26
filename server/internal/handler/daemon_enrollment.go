@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"github.com/multica-ai/multica/server/internal/service"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -59,6 +59,10 @@ func (h *Handler) CreateDaemonEnrollment(w http.ResponseWriter, r *http.Request)
 	req.Name = strings.TrimSpace(req.Name)
 	if req.DaemonID == "" || req.Name == "" {
 		writeError(w, http.StatusBadRequest, "daemon_id and name are required")
+		return
+	}
+	if isQoderManagedDaemonID(req.DaemonID) {
+		writeError(w, http.StatusBadRequest, "reserved daemon_id")
 		return
 	}
 	raw, err := auth.GenerateDaemonEnrollmentToken()
@@ -128,7 +132,7 @@ func (h *Handler) ListDaemonEnrollments(w http.ResponseWriter, r *http.Request) 
 		projection := enrollmentProjection(e)
 		active := make([]string, 0)
 		for _, rt := range runtimes {
-			if !e.RevokedAt.Valid && rt.DaemonID.Valid && rt.DaemonID.String == e.DaemonID && rt.Status == "online" {
+			if !e.RevokedAt.Valid && rt.DaemonID.Valid && rt.DaemonID.String == e.DaemonID && rt.OwnerID.Valid && rt.OwnerID == e.CreatorID && rt.Status == "online" {
 				active = append(active, uuidToString(rt.ID))
 			}
 		}
@@ -232,7 +236,7 @@ func cleanupEnrolledDaemon(ctx context.Context, q *db.Queries, e db.DaemonEnroll
 	}
 	ids := make([]pgtype.UUID, 0)
 	for _, rt := range runtimes {
-		if rt.DaemonID.Valid && rt.DaemonID.String == e.DaemonID {
+		if rt.DaemonID.Valid && rt.DaemonID.String == e.DaemonID && rt.OwnerID.Valid && rt.OwnerID == e.CreatorID {
 			result.Runtimes = append(result.Runtimes, rt)
 			ids = append(ids, rt.ID)
 		}
@@ -255,6 +259,6 @@ func cleanupEnrolledDaemon(ctx context.Context, q *db.Queries, e db.DaemonEnroll
 			return result, err
 		}
 	}
-	result.RevokedTokenHashes, err = q.DeleteDaemonTokensByWorkspaceAndDaemons(ctx, db.DeleteDaemonTokensByWorkspaceAndDaemonsParams{WorkspaceID: e.WorkspaceID, DaemonIds: []string{e.DaemonID}})
+	result.RevokedTokenHashes, err = q.DeleteDaemonTokensByEnrollment(ctx, pgtype.Text{String: e.TokenHash, Valid: true})
 	return result, err
 }

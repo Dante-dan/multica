@@ -3,15 +3,16 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/testutil"
-	"net/http"
-	"strings"
-	"testing"
-	"time"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -51,7 +52,15 @@ func TestDaemonEnrollmentLifecycle(t *testing.T) {
 	runtimeID := dbfx.Runtime(t, "Enrolled runtime", testutil.Cols{"daemon_id": host, "runtime_mode": "local", "provider": "multica_daemon"})
 	agentID := dbfx.Agent(t, "Enrolled agent", runtimeID, testutil.Cols{"runtime_mode": "local"})
 	taskID := dbfx.Task(t, agentID, testutil.Cols{"runtime_id": runtimeID})
-	_, err := testHandler.Queries.CreateDaemonToken(ctx, db.CreateDaemonTokenParams{TokenHash: auth.HashToken("mds_derived"), WorkspaceID: parseUUID(testWorkspaceID), DaemonID: host, ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true}, EnrollmentTokenHash: pgtype.Text{String: auth.HashToken(enrollment.Token), Valid: true}})
+	_, err := testHandler.Queries.CreateDaemonToken(ctx, db.CreateDaemonTokenParams{TokenHash: auth.HashToken("mds_derived"), WorkspaceID: parseUUID(testWorkspaceID), DaemonID: host, ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true}, EnrollmentTokenHash: pgtype.Text{String: auth.HashToken(enrollment.Token), Valid: true}, OwnerID: parseUUID(testUserID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherOwner := dbfx.User(t, "Unrelated enrollment owner", "unrelated-enrollment-owner@example.com")
+	otherRuntime := dbfx.Runtime(t, "Other owner on same host", testutil.Cols{"daemon_id": host, "owner_id": otherOwner, "status": "online"})
+	otherAgent := dbfx.Agent(t, "Unrelated host agent", otherRuntime)
+	otherTask := dbfx.Task(t, otherAgent, testutil.Cols{"runtime_id": otherRuntime, "status": "running"})
+	_, err = testHandler.Queries.CreateDaemonToken(ctx, db.CreateDaemonTokenParams{TokenHash: auth.HashToken("mdt_unrelated-owner"), WorkspaceID: parseUUID(testWorkspaceID), DaemonID: host, ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true}, OwnerID: parseUUID(otherOwner)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +78,17 @@ func TestDaemonEnrollmentLifecycle(t *testing.T) {
 	dbfx.QueryRow(t, `SELECT status FROM agent_task_queue WHERE id=$1`, taskID).Scan(&status)
 	if status != "cancelled" {
 		t.Fatalf("task status %s", status)
+	}
+	dbfx.QueryRow(t, `SELECT status FROM agent_runtime WHERE id=$1`, otherRuntime).Scan(&status)
+	if status != "online" {
+		t.Fatalf("rotation changed another owner's runtime: %s", status)
+	}
+	dbfx.QueryRow(t, `SELECT status FROM agent_task_queue WHERE id=$1`, otherTask).Scan(&status)
+	if status != "running" {
+		t.Fatalf("rotation cancelled another owner's task: %s", status)
+	}
+	if _, err := testHandler.Queries.GetDaemonTokenByHash(ctx, auth.HashToken("mdt_unrelated-owner")); err != nil {
+		t.Fatalf("rotation revoked another owner's daemon token: %v", err)
 	}
 	check := func(token string, want int) {
 		req := newRequest(http.MethodGet, "/api/daemon/workspaces", nil)
