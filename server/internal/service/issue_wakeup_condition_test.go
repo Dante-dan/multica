@@ -827,7 +827,6 @@ func TestWakeupConditionVCSChecksKeyedByPullRequest(t *testing.T) {
 	})
 }
 
-// #9344: a child's review/blocker handoff must not require closure.
 func TestOtherIssueHandoffState(t *testing.T) {
 	for _, status := range []string{"backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"} {
 		t.Run(status, func(t *testing.T) {
