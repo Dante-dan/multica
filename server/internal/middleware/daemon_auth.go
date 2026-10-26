@@ -113,7 +113,7 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 
 			// Administrator-managed enrollment credentials never fall back to
 			// user authentication or the best-effort internal-token cache.
-			if strings.HasPrefix(tokenString, auth.DaemonEnrollmentTokenPrefix) {
+			if strings.HasPrefix(tokenString, auth.DaemonEnrollmentTokenPrefix) || strings.HasPrefix(tokenString, "mds_") {
 				var starter EnrollmentTxStarter
 				if len(enrollmentStarters) > 0 {
 					starter = enrollmentStarters[0]

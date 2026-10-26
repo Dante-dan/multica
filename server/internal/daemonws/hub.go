@@ -942,6 +942,26 @@ func (h *Hub) unregister(c *client) {
 	)
 }
 
+// CloseEnrollment disconnects only connections authenticated with the old
+// credential. A newly rotated credential may already have connected.
+func (h *Hub) CloseEnrollment(hash string) {
+	if hash == "" {
+		return
+	}
+	h.mu.Lock()
+	connections := make([]*client, 0)
+	for c := range h.clients {
+		if c.identity.EnrollmentTokenHash == hash {
+			connections = append(connections, c)
+		}
+	}
+	h.mu.Unlock()
+	for _, c := range connections {
+		c.cancel()
+		_ = c.conn.Close()
+	}
+}
+
 func (c *client) readPump() {
 	defer func() {
 		// Cancel first so async RPC handlers stop before we close the send
@@ -1043,6 +1063,9 @@ func (c *client) handleRPCFrame(raw json.RawMessage) {
 		}
 		status, body, err := handler(hctx, c.identity, req.Method, req.Body)
 		if err != nil {
+			if errors.Is(err, ErrEnrollmentRevoked) {
+				_ = c.conn.Close()
+			}
 			if status < 400 {
 				status = http.StatusInternalServerError
 			}

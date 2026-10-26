@@ -12,16 +12,17 @@ import (
 )
 
 const createDaemonToken = `-- name: CreateDaemonToken :one
-INSERT INTO daemon_token (token_hash, workspace_id, daemon_id, expires_at)
-VALUES ($1, $2, $3, $4)
-RETURNING id, token_hash, workspace_id, daemon_id, expires_at, created_at
+INSERT INTO daemon_token (token_hash, workspace_id, daemon_id, expires_at, enrollment_token_hash)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, token_hash, workspace_id, daemon_id, expires_at, created_at, enrollment_token_hash
 `
 
 type CreateDaemonTokenParams struct {
-	TokenHash   string             `json:"token_hash"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	DaemonID    string             `json:"daemon_id"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	TokenHash           string             `json:"token_hash"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	DaemonID            string             `json:"daemon_id"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	EnrollmentTokenHash pgtype.Text        `json:"enrollment_token_hash"`
 }
 
 func (q *Queries) CreateDaemonToken(ctx context.Context, arg CreateDaemonTokenParams) (DaemonToken, error) {
@@ -30,6 +31,7 @@ func (q *Queries) CreateDaemonToken(ctx context.Context, arg CreateDaemonTokenPa
 		arg.WorkspaceID,
 		arg.DaemonID,
 		arg.ExpiresAt,
+		arg.EnrollmentTokenHash,
 	)
 	var i DaemonToken
 	err := row.Scan(
@@ -39,6 +41,7 @@ func (q *Queries) CreateDaemonToken(ctx context.Context, arg CreateDaemonTokenPa
 		&i.DaemonID,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.EnrollmentTokenHash,
 	)
 	return i, err
 }
@@ -93,7 +96,7 @@ func (q *Queries) DeleteExpiredDaemonTokens(ctx context.Context) error {
 }
 
 const getDaemonTokenByHash = `-- name: GetDaemonTokenByHash :one
-SELECT id, token_hash, workspace_id, daemon_id, expires_at, created_at FROM daemon_token
+SELECT id, token_hash, workspace_id, daemon_id, expires_at, created_at, enrollment_token_hash FROM daemon_token
 WHERE token_hash = $1 AND expires_at > now()
 `
 
@@ -107,6 +110,7 @@ func (q *Queries) GetDaemonTokenByHash(ctx context.Context, tokenHash string) (D
 		&i.DaemonID,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.EnrollmentTokenHash,
 	)
 	return i, err
 }

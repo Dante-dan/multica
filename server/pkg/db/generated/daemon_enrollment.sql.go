@@ -52,6 +52,20 @@ func (q *Queries) CreateDaemonEnrollment(ctx context.Context, arg CreateDaemonEn
 	return i, err
 }
 
+const deleteDaemonEnrollmentsByCreator = `-- name: DeleteDaemonEnrollmentsByCreator :exec
+DELETE FROM daemon_enrollment WHERE workspace_id = $1 AND creator_id = $2
+`
+
+type DeleteDaemonEnrollmentsByCreatorParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	CreatorID   pgtype.UUID `json:"creator_id"`
+}
+
+func (q *Queries) DeleteDaemonEnrollmentsByCreator(ctx context.Context, arg DeleteDaemonEnrollmentsByCreatorParams) error {
+	_, err := q.db.Exec(ctx, deleteDaemonEnrollmentsByCreator, arg.WorkspaceID, arg.CreatorID)
+	return err
+}
+
 const deleteDaemonEnrollmentsByWorkspace = `-- name: DeleteDaemonEnrollmentsByWorkspace :exec
 DELETE FROM daemon_enrollment WHERE workspace_id = $1
 `
@@ -95,6 +109,34 @@ func (q *Queries) ListDaemonEnrollments(ctx context.Context, workspaceID pgtype.
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockDaemonEnrollment = `-- name: LockDaemonEnrollment :one
+SELECT id, workspace_id, daemon_id, name, creator_id, token_hash, generation, expires_at, revoked_at, created_at, updated_at FROM daemon_enrollment WHERE id = $1 AND workspace_id = $2 FOR UPDATE
+`
+
+type LockDaemonEnrollmentParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockDaemonEnrollment(ctx context.Context, arg LockDaemonEnrollmentParams) (DaemonEnrollment, error) {
+	row := q.db.QueryRow(ctx, lockDaemonEnrollment, arg.ID, arg.WorkspaceID)
+	var i DaemonEnrollment
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.DaemonID,
+		&i.Name,
+		&i.CreatorID,
+		&i.TokenHash,
+		&i.Generation,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const lockLiveDaemonEnrollment = `-- name: LockLiveDaemonEnrollment :one

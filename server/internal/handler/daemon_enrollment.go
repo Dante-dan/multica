@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/multica-ai/multica/server/internal/service"
 	"net/http"
 	"strings"
 	"time"
@@ -12,10 +14,12 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// These handlers implement the administrator side of single-workspace host
-// enrollment. Route activation requires the daemon credential/authentication
-// lifecycle and WebSocket revocation fence; this file alone is not that feature.
+// Administrator APIs manage single-workspace daemon credentials.
 func (h *Handler) enrollmentAdministrator(w http.ResponseWriter, r *http.Request) (db.Member, bool) {
+	if isMachineCredentialActor(r) {
+		writeError(w, http.StatusForbidden, "this endpoint is only available to human actors")
+		return db.Member{}, false
+	}
 	wsID := workspaceIDFromURL(r, "id")
 	member, ok := h.requireWorkspaceMember(w, r, wsID, "workspace not found")
 	if !ok {
@@ -62,7 +66,27 @@ func (h *Handler) CreateDaemonEnrollment(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to generate credential")
 		return
 	}
-	e, err := h.Queries.CreateDaemonEnrollment(r.Context(), db.CreateDaemonEnrollmentParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "failed to create enrollment")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	q := h.Queries.WithTx(tx)
+	if _, err := q.LockWorkspaceForChatSessionCreate(r.Context(), member.WorkspaceID); err != nil {
+		writeError(w, 404, "workspace not found")
+		return
+	}
+	if err := q.LockSubscriberWrites(r.Context(), db.LockSubscriberWritesParams{WorkspaceID: member.WorkspaceID, UserID: member.UserID}); err != nil {
+		writeError(w, 500, "failed to authorize enrollment")
+		return
+	}
+	live, err := q.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{UserID: member.UserID, WorkspaceID: member.WorkspaceID})
+	if err != nil || !roleAllowed(live.Role, "owner", "admin") {
+		writeError(w, 403, "insufficient permissions")
+		return
+	}
+	e, err := q.CreateDaemonEnrollment(r.Context(), db.CreateDaemonEnrollmentParams{
 		WorkspaceID: member.WorkspaceID, DaemonID: req.DaemonID, Name: req.Name,
 		CreatorID: member.UserID, TokenHash: auth.HashToken(raw),
 		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(30 * 24 * time.Hour), Valid: true},
@@ -73,6 +97,10 @@ func (h *Handler) CreateDaemonEnrollment(w http.ResponseWriter, r *http.Request)
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create enrollment")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "failed to commit enrollment")
 		return
 	}
 	result := enrollmentProjection(e)
@@ -90,45 +118,37 @@ func (h *Handler) ListDaemonEnrollments(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "failed to list enrollments")
 		return
 	}
+	runtimes, err := h.Queries.ListAgentRuntimes(r.Context(), member.WorkspaceID)
+	if err != nil {
+		writeError(w, 500, "failed to list runtimes")
+		return
+	}
 	result := make([]map[string]any, 0, len(rows))
 	for _, e := range rows {
-		result = append(result, enrollmentProjection(e))
+		projection := enrollmentProjection(e)
+		active := make([]string, 0)
+		for _, rt := range runtimes {
+			if !e.RevokedAt.Valid && rt.DaemonID.Valid && rt.DaemonID.String == e.DaemonID && rt.Status == "online" {
+				active = append(active, uuidToString(rt.ID))
+			}
+		}
+		projection["active_runtime_ids"] = active
+		result = append(result, projection)
 	}
 	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) RotateDaemonEnrollment(w http.ResponseWriter, r *http.Request) {
-	member, ok := h.enrollmentAdministrator(w, r)
-	if !ok {
-		return
-	}
-	id, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "enrollmentId"), "enrollment_id")
-	if !ok {
-		return
-	}
-	raw, err := auth.GenerateDaemonEnrollmentToken()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate credential")
-		return
-	}
-	e, err := h.Queries.RotateDaemonEnrollment(r.Context(), db.RotateDaemonEnrollmentParams{
-		ID: id, WorkspaceID: member.WorkspaceID, TokenHash: auth.HashToken(raw),
-		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(30 * 24 * time.Hour), Valid: true},
-	})
-	if isNotFound(err) {
-		writeError(w, http.StatusNotFound, "enrollment not found")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to rotate credential")
-		return
-	}
-	result := enrollmentProjection(e)
-	result["token"] = raw
-	writeJSON(w, http.StatusOK, result)
+	h.changeDaemonEnrollment(w, r, true)
+}
+func (h *Handler) RevokeDaemonEnrollment(w http.ResponseWriter, r *http.Request) {
+	h.changeDaemonEnrollment(w, r, false)
 }
 
-func (h *Handler) RevokeDaemonEnrollment(w http.ResponseWriter, r *http.Request) {
+// changeDaemonEnrollment holds the exclusive enrollment lock until credential,
+// runtime, task and derived-token state is committed. In-flight enrolled HTTP,
+// heartbeat and RPC operations hold the matching shared lock.
+func (h *Handler) changeDaemonEnrollment(w http.ResponseWriter, r *http.Request, rotate bool) {
 	member, ok := h.enrollmentAdministrator(w, r)
 	if !ok {
 		return
@@ -137,14 +157,104 @@ func (h *Handler) RevokeDaemonEnrollment(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	e, err := h.Queries.RevokeDaemonEnrollment(r.Context(), db.RevokeDaemonEnrollmentParams{ID: id, WorkspaceID: member.WorkspaceID})
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "failed to change enrollment")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	q := h.Queries.WithTx(tx)
+	old, err := q.LockDaemonEnrollment(r.Context(), db.LockDaemonEnrollmentParams{ID: id, WorkspaceID: member.WorkspaceID})
 	if isNotFound(err) {
-		writeError(w, http.StatusNotFound, "enrollment not found")
+		writeError(w, 404, "enrollment not found")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to revoke credential")
+		writeError(w, 500, "failed to load enrollment")
 		return
 	}
-	writeJSON(w, http.StatusOK, enrollmentProjection(e))
+	if old.RevokedAt.Valid {
+		// A later enrollment may reuse this host identity. Repeating revoke
+		// on the historical record must never cancel that replacement host.
+		if rotate {
+			writeError(w, http.StatusNotFound, "enrollment not found")
+		} else {
+			writeJSON(w, http.StatusOK, enrollmentProjection(old))
+		}
+		return
+	}
+	var e db.DaemonEnrollment
+	var raw string
+	if rotate {
+		raw, err = auth.GenerateDaemonEnrollmentToken()
+		if err == nil {
+			e, err = q.RotateDaemonEnrollment(r.Context(), db.RotateDaemonEnrollmentParams{ID: id, WorkspaceID: member.WorkspaceID, TokenHash: auth.HashToken(raw), ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(30 * 24 * time.Hour), Valid: true}})
+		}
+	} else {
+		e, err = q.RevokeDaemonEnrollment(r.Context(), db.RevokeDaemonEnrollmentParams{ID: id, WorkspaceID: member.WorkspaceID})
+	}
+	if isNotFound(err) {
+		writeError(w, 404, "enrollment not found")
+		return
+	}
+	if err != nil {
+		writeError(w, 500, "failed to change credential")
+		return
+	}
+	result, err := cleanupEnrolledDaemon(r.Context(), q, old)
+	if err != nil {
+		writeError(w, 500, "failed to revoke daemon state")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "failed to commit enrollment")
+		return
+	}
+	if h.DaemonHub != nil {
+		h.DaemonHub.CloseEnrollment(old.TokenHash)
+	}
+	for _, hash := range result.RevokedTokenHashes {
+		h.DaemonTokenCache.Invalidate(r.Context(), hash)
+	}
+	h.publishRevocation(r.Context(), result, uuidToString(member.WorkspaceID), "user", uuidToString(member.UserID))
+	projection := enrollmentProjection(e)
+	if rotate {
+		projection["token"] = raw
+	}
+	writeJSON(w, http.StatusOK, projection)
+}
+
+func cleanupEnrolledDaemon(ctx context.Context, q *db.Queries, e db.DaemonEnrollment) (revocationResult, error) {
+	result := revocationResult{}
+	runtimes, err := q.ListAgentRuntimes(ctx, e.WorkspaceID)
+	if err != nil {
+		return result, err
+	}
+	ids := make([]pgtype.UUID, 0)
+	for _, rt := range runtimes {
+		if rt.DaemonID.Valid && rt.DaemonID.String == e.DaemonID {
+			result.Runtimes = append(result.Runtimes, rt)
+			ids = append(ids, rt.ID)
+		}
+	}
+	if len(ids) > 0 {
+		result.CancelledTasks, err = q.CancelAgentTasksByRuntimeOrAgent(ctx, db.CancelAgentTasksByRuntimeOrAgentParams{RuntimeIds: ids, AgentIds: []pgtype.UUID{}})
+		if err != nil {
+			return result, err
+		}
+		for _, task := range result.CancelledTasks {
+			if err := q.DeleteTaskTokensByTask(ctx, task.ID); err != nil {
+				return result, err
+			}
+		}
+		if err := service.SettleTerminalTaskState(ctx, q, result.CancelledTasks...); err != nil {
+			return result, err
+		}
+		result.OfflineRuntimeIDs, err = q.ForceOfflineRuntimesByIDs(ctx, ids)
+		if err != nil {
+			return result, err
+		}
+	}
+	result.RevokedTokenHashes, err = q.DeleteDaemonTokensByWorkspaceAndDaemons(ctx, db.DeleteDaemonTokensByWorkspaceAndDaemonsParams{WorkspaceID: e.WorkspaceID, DaemonIds: []string{e.DaemonID}})
+	return result, err
 }

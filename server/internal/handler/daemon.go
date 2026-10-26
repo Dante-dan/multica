@@ -168,6 +168,15 @@ func (h *Handler) requireDaemonTaskAccessWithWorkspace(w http.ResponseWriter, r 
 	if !h.requireDaemonWorkspaceAccess(w, r, wsID) {
 		return db.AgentTaskQueue{}, "", false
 	}
+	if middleware.DaemonEnrollmentHashFromContext(r.Context()) != "" {
+		if !task.RuntimeID.Valid {
+			writeError(w, 404, "task not found")
+			return db.AgentTaskQueue{}, "", false
+		}
+		if _, ok := h.requireDaemonRuntimeAccess(w, r, uuidToString(task.RuntimeID)); !ok {
+			return db.AgentTaskQueue{}, "", false
+		}
+	}
 	return task, wsID, true
 }
 
@@ -1010,6 +1019,9 @@ func (h *Handler) DaemonDeregister(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("deregister: workspace mismatch", "runtime_id", rid)
 			continue
 		}
+		if middleware.DaemonEnrollmentHashFromContext(r.Context()) != "" && (!rt.DaemonID.Valid || rt.DaemonID.String != middleware.DaemonIDFromContext(r.Context())) {
+			continue
+		}
 
 		if err := h.setRuntimeOffline(r.Context(), rt.ID, req.OfflineReasons[rid]); err != nil {
 			slog.Warn("deregister: failed to set offline", "runtime_id", rid, "error", err)
@@ -1231,6 +1243,9 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 // fallback for a daemon that stops receiving WebSocket acknowledgements.
 func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws.ClientIdentity, runtimeID string, supportsBatchImport bool) (*protocol.DaemonHeartbeatAckPayload, error) {
 	if identity.EnrollmentTokenHash != "" {
+		if h.TxStarter == nil {
+			return nil, fmt.Errorf("daemon enrollment unavailable")
+		}
 		tx, err := h.TxStarter.Begin(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("daemon enrollment unavailable: %w", err)
@@ -1850,7 +1865,7 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 		// bound to a different daemon must not be claimed by this one. Runtimes
 		// with a NULL daemon_id (e.g. cloud runtimes) are not machine-pinned, so
 		// they stay claimable — same tolerance as the WS handler.
-		if rt.DaemonID.Valid && rt.DaemonID.String != req.DaemonID {
+		if (rt.DaemonID.Valid && rt.DaemonID.String != req.DaemonID) || (middleware.DaemonEnrollmentHashFromContext(r.Context()) != "" && !rt.DaemonID.Valid) {
 			continue
 		}
 		runtimeByID[uuidToString(rt.ID)] = rt
@@ -1913,7 +1928,7 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
-		remoteMCPToken, daemonTokens, derr := remoteMCPDaemonTokenForClaim(resp, rt)
+		remoteMCPToken, daemonTokens, derr := remoteMCPDaemonTokenForClaim(resp, rt, middleware.DaemonEnrollmentHashFromContext(r.Context()))
 		if derr != nil {
 			slog.Error("batch claim: generate Remote MCP daemon token failed; requeueing claim",
 				"task_id", uuidToString(task.ID), "error", derr)
@@ -2252,7 +2267,7 @@ func (h *Handler) rejectClaimOnWorkspaceMismatch(ctx context.Context, task *db.A
 // uses to resolve write-only Remote MCP secrets for this task. The raw token is
 // returned only in the claim response; its hash is committed atomically with
 // the task-scoped agent token by FinalizeTaskClaim.
-func remoteMCPDaemonTokenForClaim(resp AgentTaskResponse, runtime db.AgentRuntime) (string, []db.CreateDaemonTokenParams, error) {
+func remoteMCPDaemonTokenForClaim(resp AgentTaskResponse, runtime db.AgentRuntime, enrollmentHashes ...string) (string, []db.CreateDaemonTokenParams, error) {
 	if len(resp.RemoteMCPConnections) == 0 {
 		return "", nil, nil
 	}
@@ -2263,11 +2278,19 @@ func remoteMCPDaemonTokenForClaim(resp AgentTaskResponse, runtime db.AgentRuntim
 	if err != nil {
 		return "", nil, fmt.Errorf("generate Remote MCP daemon token: %w", err)
 	}
+	var enrollmentHash pgtype.Text
+	if len(enrollmentHashes) > 0 && enrollmentHashes[0] != "" {
+		// Distinct namespace prevents the legacy best-effort token cache from
+		// accepting a derived enrolled credential after administrator revocation.
+		raw = "mds_" + strings.TrimPrefix(raw, "mdt_")
+		enrollmentHash = pgtype.Text{String: enrollmentHashes[0], Valid: true}
+	}
 	return raw, []db.CreateDaemonTokenParams{{
-		TokenHash:   auth.HashToken(raw),
-		WorkspaceID: runtime.WorkspaceID,
-		DaemonID:    runtime.DaemonID.String,
-		ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(24 * time.Hour), Valid: true},
+		EnrollmentTokenHash: enrollmentHash,
+		TokenHash:           auth.HashToken(raw),
+		WorkspaceID:         runtime.WorkspaceID,
+		DaemonID:            runtime.DaemonID.String,
+		ExpiresAt:           pgtype.Timestamptz{Time: time.Now().Add(24 * time.Hour), Valid: true},
 	}}, nil
 }
 
@@ -3863,7 +3886,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to mint task token")
 		return
 	}
-	remoteMCPToken, daemonTokens, derr := remoteMCPDaemonTokenForClaim(resp, runtime)
+	remoteMCPToken, daemonTokens, derr := remoteMCPDaemonTokenForClaim(resp, runtime, middleware.DaemonEnrollmentHashFromContext(r.Context()))
 	if derr != nil {
 		outcome = "error_remote_mcp_token"
 		slog.Error("task claim: failed to generate Remote MCP daemon token",

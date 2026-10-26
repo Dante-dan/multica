@@ -791,6 +791,9 @@ type RenewTokenResponse struct {
 // so this is safe to call on any cadence; the only thing extra calls cost is
 // one round trip and one cheap SELECT.
 func (c *Client) RenewToken(ctx context.Context) (*RenewTokenResponse, error) {
+	if c.UsesEnrollmentToken() {
+		return nil, fmt.Errorf("enrollment credentials must be rotated by a workspace administrator")
+	}
 	var resp RenewTokenResponse
 	if err := c.postJSON(ctx, "/api/tokens/current/renew", map[string]any{}, &resp); err != nil {
 		return nil, err
@@ -851,7 +854,11 @@ func (c *Client) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, error) {
 	}
 	if resp.StatusCode >= 400 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+		reqErr := &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+		if c.UsesEnrollmentToken() && resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("host credential rejected; ask a workspace administrator to rotate the enrollment and restart with the replacement credential: %w", reqErr)
+		}
+		return nil, reqErr
 	}
 
 	var workspaces []WorkspaceInfo

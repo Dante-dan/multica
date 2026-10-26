@@ -22,3 +22,15 @@ func TestDaemonEnrollmentFailsClosedWithoutAuthority(t *testing.T) {
 		t.Fatal("untrusted actor headers must be stripped before enrollment auth")
 	}
 }
+
+func TestDerivedEnrollmentFailsClosedWithoutAuthority(t *testing.T) {
+	called := false
+	req := httptest.NewRequest(http.MethodPost, "/api/daemon/tasks/claim", nil)
+	req.Header.Set("Authorization", "Bearer mds_untrusted")
+	req.Header.Set("X-User-ID", "forged-user")
+	res := httptest.NewRecorder()
+	DaemonAuth(nil, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true })).ServeHTTP(res, req)
+	if called || res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("derived enrollment must fail closed: status %d called %v", res.Code, called)
+	}
+}

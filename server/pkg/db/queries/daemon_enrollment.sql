@@ -31,3 +31,9 @@ FOR SHARE OF e;
 
 -- name: DeleteDaemonEnrollmentsByWorkspace :exec
 DELETE FROM daemon_enrollment WHERE workspace_id = $1;
+
+-- name: LockDaemonEnrollment :one
+SELECT * FROM daemon_enrollment WHERE id = $1 AND workspace_id = $2 FOR UPDATE;
+
+-- name: DeleteDaemonEnrollmentsByCreator :exec
+DELETE FROM daemon_enrollment WHERE workspace_id = $1 AND creator_id = $2;

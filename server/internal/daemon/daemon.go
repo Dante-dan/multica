@@ -2214,10 +2214,6 @@ func (d *Daemon) deregisterRuntimes() {
 
 // resolveAuth loads the auth token from the CLI config for the active profile.
 func (d *Daemon) resolveAuth() error {
-	cfg, err := cli.LoadCLIConfigForProfile(d.cfg.Profile)
-	if err != nil {
-		return fmt.Errorf("load CLI config: %w", err)
-	}
 	enrollmentToken := strings.TrimSpace(os.Getenv("MULTICA_DAEMON_ENROLLMENT_TOKEN"))
 	if enrollmentToken != "" {
 		if !strings.HasPrefix(enrollmentToken, auth.DaemonEnrollmentTokenPrefix) {
@@ -2227,6 +2223,10 @@ func (d *Daemon) resolveAuth() error {
 		d.cfg.LegacyDaemonIDs = nil
 		d.logger.Info("authenticated with workspace-scoped host credential")
 		return nil
+	}
+	cfg, err := cli.LoadCLIConfigForProfile(d.cfg.Profile)
+	if err != nil {
+		return fmt.Errorf("load CLI config: %w", err)
 	}
 	if cfg.Token == "" {
 		loginHint := "'multica login'"

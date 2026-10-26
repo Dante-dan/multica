@@ -71,7 +71,7 @@ func (h *Handler) buildDaemonWebSocketIdentity(w http.ResponseWriter, r *http.Re
 			return daemonws.ClientIdentity{}, false
 		}
 		rt := rows[index]
-		if identity.DaemonID != "" && rt.DaemonID.Valid && rt.DaemonID.String != identity.DaemonID {
+		if identity.DaemonID != "" && ((rt.DaemonID.Valid && rt.DaemonID.String != identity.DaemonID) || (identity.EnrollmentTokenHash != "" && !rt.DaemonID.Valid)) {
 			writeError(w, http.StatusNotFound, "runtime not found")
 			return daemonws.ClientIdentity{}, false
 		}
