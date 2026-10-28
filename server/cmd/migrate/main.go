@@ -142,6 +142,7 @@ var pgBigmOperatorClass = extensionOperatorClass{
 var concurrentIndexCleanups = map[string]string{
 	"599_daemon_enrollment_identity_index":                      "daemon_enrollment_workspace_daemon_idx",
 	"600_daemon_enrollment_token_index":                         "daemon_enrollment_token_hash_idx",
+	"594_agent_task_process_cleanup_index":                      "idx_agent_task_queue_process_cleanup",
 	"563_search_index_change_changed_at_index":                  "idx_search_index_change_changed_at",
 	"562_search_index_change_workspace_index":                   "idx_search_index_change_workspace_xid",
 	"552_agent_task_history_page_index":                         "idx_agent_task_queue_history_page",
