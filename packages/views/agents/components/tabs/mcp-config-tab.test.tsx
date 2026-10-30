@@ -14,6 +14,11 @@ import { McpConfigTab } from "./mcp-config-tab";
 const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
 
 const mockRuntimeCapabilities = vi.hoisted(() => vi.fn());
+const mockAgentEnvKeys = vi.hoisted(() => vi.fn(async () => ({ agent_id: "agent-1", keys: ["TOKEN"] })));
+vi.mock("@multica/core/api", async () => {
+  const actual = await vi.importActual<typeof import("@multica/core/api")>("@multica/core/api");
+  return { ...actual, api: { getAgentEnvKeys: mockAgentEnvKeys } };
+});
 const mockAddServer = vi.hoisted(() => vi.fn());
 const mockSetEnabled = vi.hoisted(() => vi.fn());
 const mockRemoveServer = vi.hoisted(() => vi.fn());
@@ -431,18 +436,20 @@ describe("McpConfigTab", () => {
   });
 
   it("adds one stdio server through the form and preserves historical top-level data", async () => {
+    mockRuntimeCapabilities.mockResolvedValue({ skills: [], supported: true, mcpServers: [], mcpSupported: true });
     const user = userEvent.setup();
-    const { onSave } = renderTab({ mcp_config: { version: 1 } });
+    const { onSave } = renderTab({ mcp_config: { version: 1 } }, undefined, onlineRuntime);
 
     await user.click(screen.getByRole("button", { name: /add mcp/i }));
     await user.type(screen.getByLabelText("Server name"), "fetch");
     await user.type(screen.getByLabelText("Command"), "uvx");
+    await user.click(await screen.findByRole("checkbox", { name: "TOKEN" }));
     await user.click(screen.getByRole("button", { name: "Add" }));
 
     expect(onSave).toHaveBeenCalledWith({
       mcp_config: {
         version: 1,
-        mcpServers: { fetch: { command: "uvx" } },
+        mcpServers: { fetch: { command: "uvx", env_vars: ["TOKEN"] } },
       },
     });
   });

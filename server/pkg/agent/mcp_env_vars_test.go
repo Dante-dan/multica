@@ -27,7 +27,10 @@ func TestAdaptMcpEnvReferences(t *testing.T) {
 		{"unsupported", "grok", string(raw)},
 		{"conflict", "claude", `{"mcpServers":{"tapd":{"command":"uvx","env_vars":["TOKEN"],"env":{"TOKEN":"private-value"}}}}`},
 		{"http", "codex", `{"mcpServers":{"tapd":{"url":"https://example.com","env_vars":["TOKEN"]}}}`},
+		{"http with command", "codex", `{"mcpServers":{"tapd":{"type":"http","command":"uvx","env_vars":["TOKEN"]}}}`},
+		{"empty command", "codex", `{"mcpServers":{"tapd":{"command":"","env_vars":["TOKEN"]}}}`},
 		{"wrong shape", "cursor", `{"mcpServers":{"tapd":{"command":"uvx","env_vars":"private-value"}}}`},
+		{"null references", "cursor", `{"mcpServers":{"tapd":{"command":"uvx","env_vars":null}}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := AdaptMcpEnvReferences(tc.provider, json.RawMessage(tc.input), nil)

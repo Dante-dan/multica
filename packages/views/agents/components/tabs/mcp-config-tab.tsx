@@ -89,7 +89,7 @@ export function McpConfigTab({
     canReadRuntime
       ? runtime.id
       : null;
-  const envReferencesSupported = ["claude", "codex", "cursor", "codebuddy"].includes(agent.provider);
+  const envReferencesSupported = ["claude", "codex", "cursor", "codebuddy"].includes(runtime?.provider ?? "");
   const environmentKeysQuery = useQuery({
     queryKey: ["agent-env-keys", agent.workspace_id, agent.id],
     queryFn: () => api.getAgentEnvKeys(agent.id),

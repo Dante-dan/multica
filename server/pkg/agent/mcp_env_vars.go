@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 var mcpEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -37,11 +38,17 @@ func AdaptMcpEnvReferences(provider string, raw json.RawMessage, env map[string]
 		if provider != "claude" && provider != "codex" && provider != "cursor" && provider != "codebuddy" {
 			return nil, fmt.Errorf("MCP server %q: env_vars is unsupported for runtime %q", name, provider)
 		}
-		if _, command := server["command"]; !command {
+		var command, transport string
+		if rawType, ok := server["type"]; ok {
+			if err := json.Unmarshal(rawType, &transport); err != nil {
+				return nil, fmt.Errorf("MCP server %q: env_vars requires STDIO", name)
+			}
+		}
+		if err := json.Unmarshal(server["command"], &command); err != nil || strings.TrimSpace(command) == "" || (transport != "" && transport != "stdio") {
 			return nil, fmt.Errorf("MCP server %q: env_vars requires STDIO", name)
 		}
 		var refs []string
-		if err := json.Unmarshal(refsRaw, &refs); err != nil {
+		if err := json.Unmarshal(refsRaw, &refs); err != nil || refs == nil {
 			return nil, fmt.Errorf("MCP server %q: env_vars must be an array of variable names", name)
 		}
 		literal := map[string]string{}
